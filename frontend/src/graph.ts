@@ -12,6 +12,8 @@ export interface GraphOptions {
   unlockOverrides: Map<string, boolean>;
   /** codes the user expanded past the depth limit */
   expanded: Set<string>;
+  /** codes whose prerequisites the user hid */
+  collapsed: Set<string>;
 }
 
 export interface CourseNodeData {
@@ -19,8 +21,10 @@ export interface CourseNodeData {
   title: string;
   status: Status;
   focus: boolean;
-  /** has prerequisites that aren't drawn (depth limit) */
+  /** has prerequisites that aren't drawn (depth limit, or hidden by the user) */
   truncated: boolean;
+  /** its prerequisites are drawn (so they can be hidden) */
+  prereqsShown: boolean;
   role: 'prereq' | 'focus' | 'unlock';
   /** for courses on the map: how many postrequisites exist and whether they're drawn */
   postreqs?: { total: number; shown: boolean };
@@ -38,6 +42,12 @@ export interface GraphResult {
   edges: Edge[];
   hiddenUnlocks: number;
   prunedAlternatives: number;
+  /**
+   * The node each node hangs off: a prerequisite's parent is the course (or group) it feeds,
+   * a postrequisite's parent is the selected course it comes from. Selected courses have none.
+   * Used to keep subtrees together when the user drags nodes around.
+   */
+  parents: Map<string, string>;
 }
 
 const COURSE_W = 210;
@@ -64,7 +74,10 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
   const edges = new Map<string, Edge>();
   const expandedCourses = new Set<string>();
   const targetSet = new Set(targets);
-  let groupId = 0;
+  const parents = new Map<string, string>();
+  const setParent = (id: string, parent: string) => {
+    if (!targetSet.has(id) && !parents.has(id)) parents.set(id, parent);
+  };
   let prunedAlternatives = 0;
 
   const addCourse = (code: string, role: CourseNodeData['role']) => {
@@ -80,6 +93,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
         status: courseStatus(catalog, code, done),
         focus: targetSet.has(code),
         truncated: false,
+        prereqsShown: false,
         role,
       } satisfies CourseNodeData,
     });
@@ -138,18 +152,20 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     const course = catalog.courses.get(code);
     if (!course?.req) return;
     if (!targetSet.has(code) && done.has(code)) return; // no need to show how you got there
-    const node = nodes.get(code)!;
-    if (depth >= opts.depth && !opts.expanded.has(code)) {
-      (node.data as CourseNodeData).truncated = true;
+    const data = nodes.get(code)!.data as CourseNodeData;
+    if (opts.collapsed.has(code) || (depth >= opts.depth && !opts.expanded.has(code))) {
+      data.truncated = true;
       return;
     }
     expandedCourses.add(code);
+    data.prereqsShown = true;
     attach(prune(course.req, ctx), code, true, depth, ctx);
   };
 
   const attach = (req: Req, target: string, targetIsCourse: boolean, depth: number, ctx: Ctx) => {
     if (req.kind === 'course') {
       addCourse(req.code, 'prereq');
+      setParent(req.code, target);
       addEdge(req.code, target, done.has(req.code));
       expand(req.code, depth + 1, ctx);
       return;
@@ -158,7 +174,10 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
       for (const item of req.items) attach(item, target, true, depth, ctx);
       return;
     }
-    const id = `group-${groupId++}`;
+    // Stable id (same group -> same id across rebuilds) so dragged positions stick.
+    const base = `g:${target}:${req.kind}:${[...collectCodes(req)].join(',')}`;
+    let id = base;
+    for (let n = 2; nodes.has(id); n++) id = `${base}#${n}`;
     const satisfied = evaluate(req, done);
     nodes.set(id, {
       id,
@@ -167,6 +186,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
       data: { op: req.kind, satisfied } satisfies GroupNodeData,
     });
     addEdge(id, target, satisfied);
+    setParent(id, target);
     for (const item of req.items) attach(item, id, false, depth, ctx);
   };
 
@@ -198,6 +218,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
       hiddenUnlocks += Math.max(0, fresh.length - perTarget);
       for (const code of fresh.slice(0, perTarget)) {
         addCourse(code, 'unlock');
+        setParent(code, t);
         unlockNodes.add(code);
       }
     }
@@ -207,7 +228,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     }
   }
 
-  return { ...layout([...nodes.values()], [...edges.values()]), hiddenUnlocks, prunedAlternatives };
+  return { ...layout([...nodes.values()], [...edges.values()]), hiddenUnlocks, prunedAlternatives, parents };
 }
 
 function layout(nodes: Node[], edges: Edge[]) {
