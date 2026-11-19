@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+  height: 100%;
+  background: #020617;
+  color-scheme: dark;
+}
+
+/* React Flow controls in the dark theme */
+.react-flow__controls {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #1e293b;
+  box-shadow: none;
+}
+.react-flow__controls-button {
+  background: #0f172a;
+  border-bottom: 1px solid #1e293b;
+  fill: #cbd5e1;
+  color: #cbd5e1;
+}
+.react-flow__controls-button:hover {
+  background: #1e293b;
+}
+.react-flow__node {
+  cursor: pointer;
+}
