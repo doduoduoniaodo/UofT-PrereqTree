@@ -6,7 +6,10 @@ import { collectCodes, evaluate, type Req } from './prereq';
 export interface GraphOptions {
   depth: number;
   otherCampuses: boolean;
+  /** default for every course on the map: draw its postrequisites (what it unlocks)? */
   showUnlocks: boolean;
+  /** per-course overrides of showUnlocks, set by the button on each course node */
+  unlockOverrides: Map<string, boolean>;
   /** codes the user expanded past the depth limit */
   expanded: Set<string>;
 }
@@ -19,6 +22,8 @@ export interface CourseNodeData {
   /** has prerequisites that aren't drawn (depth limit) */
   truncated: boolean;
   role: 'prereq' | 'focus' | 'unlock';
+  /** for courses on the map: how many postrequisites exist and whether they're drawn */
+  postreqs?: { total: number; shown: boolean };
   [key: string]: unknown;
 }
 
@@ -169,19 +174,27 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
   for (const t of targets) addCourse(t, 'focus');
   for (const t of targets) expand(t, 0, ctxFor(t));
 
+  // Postrequisites: which courses on the map should show what they unlock?
+  const unlocksOf = (t: string) => {
+    const home = campusOf(t);
+    return (catalog.unlocks.get(t) || []).filter((c) => opts.otherCampuses || home === 'Other' || campusOf(c) === home);
+  };
+  const showing = targets.filter((t) => opts.unlockOverrides.get(t) ?? opts.showUnlocks);
+  for (const t of targets) {
+    (nodes.get(t)!.data as CourseNodeData).postreqs = { total: unlocksOf(t).length, shown: showing.includes(t) };
+  }
+
   let hiddenUnlocks = 0;
-  if (opts.showUnlocks) {
+  if (showing.length) {
     // Share the unlock budget between targets so several targets don't drown the graph.
-    const perTarget = targets.length === 1 ? MAX_UNLOCKS : Math.max(3, Math.floor(MAX_UNLOCKS / targets.length));
+    const perTarget = showing.length === 1 ? MAX_UNLOCKS : Math.max(3, Math.floor(MAX_UNLOCKS / showing.length));
     const rank = (c: string) => {
       const s = courseStatus(catalog, c, done);
       return s === 'available' ? 0 : s === 'locked' ? 1 : 2;
     };
     const unlockNodes = new Set<string>();
-    for (const t of targets) {
-      const home = campusOf(t);
-      const all = (catalog.unlocks.get(t) || []).filter((c) => opts.otherCampuses || home === 'Other' || campusOf(c) === home);
-      const fresh = all.filter((c) => !nodes.has(c) || unlockNodes.has(c)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    for (const t of showing) {
+      const fresh = unlocksOf(t).filter((c) => !nodes.has(c) || unlockNodes.has(c)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
       hiddenUnlocks += Math.max(0, fresh.length - perTarget);
       for (const code of fresh.slice(0, perTarget)) {
         addCourse(code, 'unlock');
@@ -189,7 +202,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
       }
     }
     // connect every target to every drawn unlock it leads to
-    for (const t of targets) {
+    for (const t of showing) {
       for (const c of catalog.unlocks.get(t) || []) if (unlockNodes.has(c)) addEdge(t, c, false, true);
     }
   }

@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { Check, Lock, Plus, HelpCircle, Circle } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Lock, Plus, HelpCircle, Circle } from 'lucide-react';
 import clsx from 'clsx';
 import type { CourseNodeData, GroupNodeData } from '../graph';
 import { useGraphActions } from './graphActions';
@@ -7,7 +7,7 @@ import { useGraphActions } from './graphActions';
 const handle = '!w-1.5 !h-1.5 !min-w-0 !min-h-0 !border-0 !bg-slate-500';
 
 export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) {
-  const { onExpand } = useGraphActions();
+  const { onExpand, onToggleUnlocks } = useGraphActions();
   const { status, focus } = data;
   return (
     <div
@@ -35,9 +35,33 @@ export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) 
             e.stopPropagation();
             onExpand(data.code);
           }}
-          className="absolute -left-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-600 bg-slate-800 p-0.5 text-slate-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-400"
+          className="absolute -left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-slate-600 bg-slate-800 p-0.5 text-slate-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-400"
         >
           <Plus className="h-3 w-3" />
+        </button>
+      )}
+      {data.postreqs && data.postreqs.total > 0 && (
+        <button
+          title={data.postreqs.shown ? 'Hide postrequisites (what this unlocks)' : `Show postrequisites — ${data.postreqs.total} courses need this`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleUnlocks(data.code);
+          }}
+          className={clsx(
+            'absolute -right-3 top-1/2 z-10 flex -translate-y-1/2 items-center rounded-full border py-0.5 text-[10px] font-semibold transition',
+            data.postreqs.shown
+              ? 'border-indigo-500/70 bg-indigo-950 px-0.5 text-indigo-200 hover:bg-indigo-800'
+              : 'border-slate-600 bg-slate-800 pl-1.5 pr-0.5 text-slate-300 hover:border-indigo-400 hover:bg-indigo-600 hover:text-white',
+          )}
+        >
+          {data.postreqs.shown ? (
+            <ChevronLeft className="h-3 w-3" />
+          ) : (
+            <>
+              {data.postreqs.total}
+              <ChevronRight className="h-3 w-3" />
+            </>
+          )}
         </button>
       )}
       <Handle type="source" position={Position.Right} className={handle} />

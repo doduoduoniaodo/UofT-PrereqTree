@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { Background, Controls, ReactFlow, useReactFlow } from '@xyflow/react';
+import { useEffect, useMemo, useRef } from 'react';
+import { Background, Controls, ReactFlow, useNodesInitialized, useReactFlow } from '@xyflow/react';
 import { Minus, Plus, X } from 'lucide-react';
 import clsx from 'clsx';
 import { courseStatus, type Catalog } from '../catalog';
@@ -26,14 +26,41 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
   const nodes = useMemo(() => graph.nodes.map((n) => ({ ...n, selected: n.id === selected })), [graph, selected]);
   const { fitView } = useReactFlow();
 
+  // Fit once React Flow has measured the nodes, and again whenever the set of nodes changes.
   const shape = graph.nodes.map((n) => n.id).join('|');
+  const initialized = useNodesInitialized();
   useEffect(() => {
-    const t = setTimeout(() => fitView({ duration: 350, padding: 0.12, maxZoom: 1.1 }), 60);
+    if (!initialized) return;
+    const t = setTimeout(() => fitView({ duration: 350, padding: 0.12, maxZoom: 1.1 }), 30);
     return () => clearTimeout(t);
-  }, [shape, fitView]);
+  }, [shape, initialized, fitView]);
+
+  // Re-fit when the panel itself changes size (window resize, side panel opening).
+  const wrapper = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = wrapper.current;
+    if (!el) return;
+    let t: ReturnType<typeof setTimeout>;
+    const ro = new ResizeObserver(() => {
+      clearTimeout(t);
+      t = setTimeout(() => fitView({ padding: 0.12, maxZoom: 1.1 }), 120);
+    });
+    ro.observe(el);
+    return () => {
+      clearTimeout(t);
+      ro.disconnect();
+    };
+  }, [fitView]);
 
   const actions = useMemo(
-    () => ({ onExpand: (code: string) => setOpts((o) => ({ ...o, expanded: new Set(o.expanded).add(code) })) }),
+    () => ({
+      onExpand: (code: string) => setOpts((o) => ({ ...o, expanded: new Set(o.expanded).add(code) })),
+      onToggleUnlocks: (code: string) =>
+        setOpts((o) => {
+          const current = o.unlockOverrides.get(code) ?? o.showUnlocks;
+          return { ...o, unlockOverrides: new Map(o.unlockOverrides).set(code, !current) };
+        }),
+    }),
     [setOpts],
   );
 
@@ -41,7 +68,7 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
 
   return (
     <GraphActionsContext.Provider value={actions}>
-      <div className="relative h-full w-full">
+      <div ref={wrapper} className="relative h-full w-full">
         <ReactFlow
           nodes={nodes}
           edges={graph.edges}
@@ -109,8 +136,11 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
               <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
-          <Toggle on={opts.showUnlocks} onClick={() => setOpts((o) => ({ ...o, showUnlocks: !o.showUnlocks }))}>
-            What it unlocks
+          <Toggle
+            on={opts.showUnlocks}
+            onClick={() => setOpts((o) => ({ ...o, showUnlocks: !o.showUnlocks, unlockOverrides: new Map() }))}
+          >
+            Postrequisites (all)
           </Toggle>
           <Toggle on={opts.otherCampuses} onClick={() => setOpts((o) => ({ ...o, otherCampuses: !o.otherCampuses }))}>
             All alternatives
@@ -132,7 +162,7 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
           <div className="text-slate-500">
             {courseCount} courses
             {graph.prunedAlternatives > 0 && ` · ${graph.prunedAlternatives} alternatives hidden`}
-            {graph.hiddenUnlocks > 0 && ` · +${graph.hiddenUnlocks} more unlocks in the side panel`}
+            {graph.hiddenUnlocks > 0 && ` · +${graph.hiddenUnlocks} more postrequisites in the side panel`}
             {' · '}double-click a course to add it to the map
           </div>
         </div>
