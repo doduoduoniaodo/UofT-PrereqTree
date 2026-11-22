@@ -6,9 +6,14 @@ import { collectCodes, evaluate, type Req } from './prereq';
 export interface GraphOptions {
   depth: number;
   otherCampuses: boolean;
+  /** default for every course on the map: draw its postrequisites (what it unlocks)? */
   showUnlocks: boolean;
+  /** per-course overrides of showUnlocks, set by the button on each course node */
+  unlockOverrides: Map<string, boolean>;
   /** codes the user expanded past the depth limit */
   expanded: Set<string>;
+  /** codes whose prerequisites the user hid */
+  collapsed: Set<string>;
 }
 
 export interface CourseNodeData {
@@ -16,9 +21,13 @@ export interface CourseNodeData {
   title: string;
   status: Status;
   focus: boolean;
-  /** has prerequisites that aren't drawn (depth limit) */
+  /** has prerequisites that aren't drawn (depth limit, or hidden by the user) */
   truncated: boolean;
+  /** its prerequisites are drawn (so they can be hidden) */
+  prereqsShown: boolean;
   role: 'prereq' | 'focus' | 'unlock';
+  /** for courses on the map: how many postrequisites exist and whether they're drawn */
+  postreqs?: { total: number; shown: boolean };
   [key: string]: unknown;
 }
 
@@ -33,6 +42,12 @@ export interface GraphResult {
   edges: Edge[];
   hiddenUnlocks: number;
   prunedAlternatives: number;
+  /**
+   * The node each node hangs off: a prerequisite's parent is the course (or group) it feeds,
+   * a postrequisite's parent is the selected course it comes from. Selected courses have none.
+   * Used to keep subtrees together when the user drags nodes around.
+   */
+  parents: Map<string, string>;
 }
 
 const COURSE_W = 210;
@@ -59,7 +74,10 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
   const edges = new Map<string, Edge>();
   const expandedCourses = new Set<string>();
   const targetSet = new Set(targets);
-  let groupId = 0;
+  const parents = new Map<string, string>();
+  const setParent = (id: string, parent: string) => {
+    if (!targetSet.has(id) && !parents.has(id)) parents.set(id, parent);
+  };
   let prunedAlternatives = 0;
 
   const addCourse = (code: string, role: CourseNodeData['role']) => {
@@ -75,6 +93,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
         status: courseStatus(catalog, code, done),
         focus: targetSet.has(code),
         truncated: false,
+        prereqsShown: false,
         role,
       } satisfies CourseNodeData,
     });
@@ -133,18 +152,20 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     const course = catalog.courses.get(code);
     if (!course?.req) return;
     if (!targetSet.has(code) && done.has(code)) return; // no need to show how you got there
-    const node = nodes.get(code)!;
-    if (depth >= opts.depth && !opts.expanded.has(code)) {
-      (node.data as CourseNodeData).truncated = true;
+    const data = nodes.get(code)!.data as CourseNodeData;
+    if (opts.collapsed.has(code) || (depth >= opts.depth && !opts.expanded.has(code))) {
+      data.truncated = true;
       return;
     }
     expandedCourses.add(code);
+    data.prereqsShown = true;
     attach(prune(course.req, ctx), code, true, depth, ctx);
   };
 
   const attach = (req: Req, target: string, targetIsCourse: boolean, depth: number, ctx: Ctx) => {
     if (req.kind === 'course') {
       addCourse(req.code, 'prereq');
+      setParent(req.code, target);
       addEdge(req.code, target, done.has(req.code));
       expand(req.code, depth + 1, ctx);
       return;
@@ -153,7 +174,10 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
       for (const item of req.items) attach(item, target, true, depth, ctx);
       return;
     }
-    const id = `group-${groupId++}`;
+    // Stable id (same group -> same id across rebuilds) so dragged positions stick.
+    const base = `g:${target}:${req.kind}:${[...collectCodes(req)].join(',')}`;
+    let id = base;
+    for (let n = 2; nodes.has(id); n++) id = `${base}#${n}`;
     const satisfied = evaluate(req, done);
     nodes.set(id, {
       id,
@@ -162,6 +186,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
       data: { op: req.kind, satisfied } satisfies GroupNodeData,
     });
     addEdge(id, target, satisfied);
+    setParent(id, target);
     for (const item of req.items) attach(item, id, false, depth, ctx);
   };
 
@@ -169,32 +194,41 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
   for (const t of targets) addCourse(t, 'focus');
   for (const t of targets) expand(t, 0, ctxFor(t));
 
+  // Postrequisites: which courses on the map should show what they unlock?
+  const unlocksOf = (t: string) => {
+    const home = campusOf(t);
+    return (catalog.unlocks.get(t) || []).filter((c) => opts.otherCampuses || home === 'Other' || campusOf(c) === home);
+  };
+  const showing = targets.filter((t) => opts.unlockOverrides.get(t) ?? opts.showUnlocks);
+  for (const t of targets) {
+    (nodes.get(t)!.data as CourseNodeData).postreqs = { total: unlocksOf(t).length, shown: showing.includes(t) };
+  }
+
   let hiddenUnlocks = 0;
-  if (opts.showUnlocks) {
+  if (showing.length) {
     // Share the unlock budget between targets so several targets don't drown the graph.
-    const perTarget = targets.length === 1 ? MAX_UNLOCKS : Math.max(3, Math.floor(MAX_UNLOCKS / targets.length));
+    const perTarget = showing.length === 1 ? MAX_UNLOCKS : Math.max(3, Math.floor(MAX_UNLOCKS / showing.length));
     const rank = (c: string) => {
       const s = courseStatus(catalog, c, done);
       return s === 'available' ? 0 : s === 'locked' ? 1 : 2;
     };
     const unlockNodes = new Set<string>();
-    for (const t of targets) {
-      const home = campusOf(t);
-      const all = (catalog.unlocks.get(t) || []).filter((c) => opts.otherCampuses || home === 'Other' || campusOf(c) === home);
-      const fresh = all.filter((c) => !nodes.has(c) || unlockNodes.has(c)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    for (const t of showing) {
+      const fresh = unlocksOf(t).filter((c) => !nodes.has(c) || unlockNodes.has(c)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
       hiddenUnlocks += Math.max(0, fresh.length - perTarget);
       for (const code of fresh.slice(0, perTarget)) {
         addCourse(code, 'unlock');
+        setParent(code, t);
         unlockNodes.add(code);
       }
     }
     // connect every target to every drawn unlock it leads to
-    for (const t of targets) {
+    for (const t of showing) {
       for (const c of catalog.unlocks.get(t) || []) if (unlockNodes.has(c)) addEdge(t, c, false, true);
     }
   }
 
-  return { ...layout([...nodes.values()], [...edges.values()]), hiddenUnlocks, prunedAlternatives };
+  return { ...layout([...nodes.values()], [...edges.values()]), hiddenUnlocks, prunedAlternatives, parents };
 }
 
 function layout(nodes: Node[], edges: Edge[]) {

@@ -25,5 +25,5 @@ body,
   background: #1e293b;
 }
 .react-flow__node {
-  cursor: pointer;
+  cursor: grab;
 }

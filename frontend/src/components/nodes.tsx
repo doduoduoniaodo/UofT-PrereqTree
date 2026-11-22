@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { Check, Lock, Plus, HelpCircle, Circle } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Lock, Minus, Plus, HelpCircle, Circle } from 'lucide-react';
 import clsx from 'clsx';
 import type { CourseNodeData, GroupNodeData } from '../graph';
 import { useGraphActions } from './graphActions';
@@ -7,12 +7,12 @@ import { useGraphActions } from './graphActions';
 const handle = '!w-1.5 !h-1.5 !min-w-0 !min-h-0 !border-0 !bg-slate-500';
 
 export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) {
-  const { onExpand } = useGraphActions();
+  const { onExpand, onCollapse, onToggleUnlocks } = useGraphActions();
   const { status, focus } = data;
   return (
     <div
       className={clsx(
-        'group relative w-[210px] h-[62px] rounded-lg border px-3 py-2 text-left transition-shadow cursor-pointer',
+        'group relative w-[210px] h-[62px] rounded-lg border px-3 py-2 text-left transition-shadow cursor-grab active:cursor-grabbing',
         status === 'completed' && 'bg-emerald-950/70 border-emerald-500/70',
         status === 'available' && 'bg-sky-950/70 border-sky-500/70',
         status === 'locked' && 'bg-slate-900 border-slate-700',
@@ -28,16 +28,56 @@ export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) 
         <span className="font-mono text-[13px] font-semibold tracking-tight text-slate-100">{data.code}</span>
       </div>
       <div className="mt-0.5 text-[11px] leading-tight text-slate-400 line-clamp-2">{data.title}</div>
-      {data.truncated && (
+      {data.truncated ? (
         <button
           title="Show this course's prerequisites"
           onClick={(e) => {
             e.stopPropagation();
             onExpand(data.code);
           }}
-          className="absolute -left-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-600 bg-slate-800 p-0.5 text-slate-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-400"
+          className="nodrag absolute -left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-slate-600 bg-slate-800 p-0.5 text-slate-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-400"
         >
           <Plus className="h-3 w-3" />
+        </button>
+      ) : (
+        data.prereqsShown && (
+          <button
+            title="Hide this course's prerequisites"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCollapse(data.code);
+            }}
+            className={clsx(
+              'nodrag absolute -left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-slate-600 bg-slate-800 p-0.5 text-slate-300 transition hover:border-indigo-400 hover:bg-indigo-600 hover:text-white',
+              !focus && 'opacity-0 group-hover:opacity-100',
+            )}
+          >
+            <Minus className="h-3 w-3" />
+          </button>
+        )
+      )}
+      {data.postreqs && data.postreqs.total > 0 && (
+        <button
+          title={data.postreqs.shown ? 'Hide postrequisites (what this unlocks)' : `Show postrequisites — ${data.postreqs.total} courses need this`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleUnlocks(data.code);
+          }}
+          className={clsx(
+            'nodrag absolute -right-3 top-1/2 z-10 flex -translate-y-1/2 items-center rounded-full border py-0.5 text-[10px] font-semibold transition',
+            data.postreqs.shown
+              ? 'border-indigo-500/70 bg-indigo-950 px-0.5 text-indigo-200 hover:bg-indigo-800'
+              : 'border-slate-600 bg-slate-800 pl-1.5 pr-0.5 text-slate-300 hover:border-indigo-400 hover:bg-indigo-600 hover:text-white',
+          )}
+        >
+          {data.postreqs.shown ? (
+            <ChevronLeft className="h-3 w-3" />
+          ) : (
+            <>
+              {data.postreqs.total}
+              <ChevronRight className="h-3 w-3" />
+            </>
+          )}
         </button>
       )}
       <Handle type="source" position={Position.Right} className={handle} />

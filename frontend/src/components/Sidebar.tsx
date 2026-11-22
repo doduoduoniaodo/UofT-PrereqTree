@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import Fuse from 'fuse.js';
-import { Check, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Search, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
 import { campusOf, courseLevel, courseStatus, type Campus, type Catalog, type Course } from '../catalog';
 import { collectCodes } from '../prereq';
@@ -15,6 +15,11 @@ interface Props {
   onToggle: (code: string) => void;
   onAdd: (code: string) => void;
   onClear: () => void;
+  /** course shown in the right-hand panel */
+  selected: string;
+  onSelect: (code: string) => void;
+  onRemove: (code: string) => void;
+  onClearTargets: () => void;
 }
 
 const CAMPUSES: { id: Campus | 'ALL'; label: string }[] = [
@@ -26,7 +31,7 @@ const CAMPUSES: { id: Campus | 'ALL'; label: string }[] = [
 
 const CODE_LIKE = /^[a-z]{2,4}[a-z0-9]?\d{0,2}[hy]?\d?$/i;
 
-export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, onAdd, onClear }: Props) {
+export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, onAdd, onClear, selected, onSelect, onRemove, onClearTargets }: Props) {
   const [tab, setTab] = useState<'search' | 'mine'>('search');
   const [query, setQuery] = useState('');
 
@@ -115,6 +120,16 @@ export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, o
         </div>
       </div>
 
+      <SelectedList
+        catalog={catalog}
+        done={done}
+        targets={targets}
+        selected={selected}
+        onSelect={onSelect}
+        onRemove={onRemove}
+        onClearTargets={onClearTargets}
+      />
+
       <div className="flex-1 overflow-y-auto">
         {tab === 'search' ? (
           query.trim() ? (
@@ -164,6 +179,75 @@ export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, o
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** The courses currently drawn on the map. */
+function SelectedList({
+  catalog,
+  done,
+  targets,
+  selected,
+  onSelect,
+  onRemove,
+  onClearTargets,
+}: {
+  catalog: Catalog;
+  done: Set<string>;
+  targets: string[];
+  selected: string;
+  onSelect: (c: string) => void;
+  onRemove: (c: string) => void;
+  onClearTargets: () => void;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="border-b border-slate-800 bg-slate-950/40">
+      <div className="flex items-center justify-between px-4 py-2">
+        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200">
+          <ChevronDown className={clsx('h-3.5 w-3.5 transition-transform', !open && '-rotate-90')} />
+          Selected courses
+          <span className="rounded-full bg-indigo-600/80 px-1.5 text-[10px] normal-case tracking-normal text-white">{targets.length}</span>
+        </button>
+        {targets.length > 1 && (
+          <button onClick={onClearTargets} className="text-[10px] text-slate-500 hover:text-red-400">
+            Clear all
+          </button>
+        )}
+      </div>
+      {open &&
+        (targets.length === 0 ? (
+          <p className="px-4 pb-3 text-[11px] text-slate-500">None yet — click a search result to add it to the map.</p>
+        ) : (
+          <div className="max-h-48 overflow-y-auto pb-1.5">
+            {targets.map((code) => (
+              <div
+                key={code}
+                onClick={() => onSelect(code)}
+                className={clsx(
+                  'group flex cursor-pointer items-center gap-2 border-l-2 px-4 py-1.5 hover:bg-slate-800/50',
+                  code === selected ? 'border-indigo-500 bg-indigo-950/30' : 'border-transparent',
+                )}
+              >
+                <StatusIcon status={courseStatus(catalog, code, done)} />
+                <span className="font-mono text-xs font-semibold text-slate-100">{code}</span>
+                <span className="min-w-0 flex-1 truncate text-[11px] text-slate-400">{catalog.courses.get(code)?.title ?? 'Not in catalog data'}</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(code);
+                  }}
+                  className="shrink-0 rounded p-0.5 text-slate-600 hover:bg-slate-700 hover:text-slate-100"
+                  aria-label={`Remove ${code} from the map`}
+                  title="Remove from map"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ))}
     </div>
   );
 }

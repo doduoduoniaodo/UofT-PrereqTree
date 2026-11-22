@@ -1,9 +1,10 @@
-import { useEffect, useMemo } from 'react';
-import { Background, Controls, ReactFlow, useReactFlow } from '@xyflow/react';
-import { Minus, Plus, X } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Background, Controls, ReactFlow, useNodesInitialized, useReactFlow, type Node, type NodeChangeset } from '@xyflow/react';
+import { Minus, Plus, RotateCcw, X } from 'lucide-react';
 import clsx from 'clsx';
 import { courseStatus, type Catalog } from '../catalog';
-import { buildGraph, type GraphOptions } from '../graph';
+import { buildGraph, type GraphOptions, type GraphResult } from '../graph';
+import { offsetFor, placeNodes, reconcileOffsets, type Offset, type Size } from '../placement';
 import { nodeTypes } from './nodes';
 import { GraphActionsContext } from './graphActions';
 import { StatusIcon } from './nodes';
@@ -23,17 +24,105 @@ interface Props {
 
 export function GraphView({ catalog, targets, done, opts, setOpts, selected, onSelect, onAdd, onRemove, onClearTargets }: Props) {
   const graph = useMemo(() => buildGraph(catalog, targets, done, opts), [catalog, targets, done, opts]);
-  const nodes = useMemo(() => graph.nodes.map((n) => ({ ...n, selected: n.id === selected })), [graph, selected]);
+  // Node positions relative to the node each one hangs off (see placement.ts): set by dragging,
+  // and by keeping the existing layout stable whenever the graph changes.
+  const [offsets, setOffsets] = useState<Map<string, Offset>>(() => new Map());
+  const [dragging, setDragging] = useState<Set<string>>(() => new Set());
+
+  // Graph rebuilt (expand/collapse, course added, ...)? Keep what's on screen where it is,
+  // put new nodes in their default spot next to their course, and only nudge that course if needed.
+  const [prevGraph, setPrevGraph] = useState(graph);
+  if (graph !== prevGraph) {
+    const prevPlaced = placeNodes(layoutOf(prevGraph), prevGraph.parents, offsets);
+    setOffsets(reconcileOffsets(prevPlaced, layoutOf(graph), graph.parents, sizesOf(graph)));
+    setPrevGraph(graph);
+  }
+
+  const placed = useMemo(() => placeNodes(layoutOf(graph), graph.parents, offsets), [graph, offsets]);
+  // Latest positions/parents for the drag handler (which React Flow may call between renders).
+  const placedRef = useRef(placed);
+  const parentsRef = useRef(graph.parents);
+  useLayoutEffect(() => {
+    placedRef.current = placed;
+    parentsRef.current = graph.parents;
+  }, [placed, graph]);
+
+  const nodes = useMemo(
+    () =>
+      graph.nodes.map((n) => ({
+        ...n,
+        position: placed.get(n.id) ?? n.position,
+        selected: n.id === selected,
+        dragging: dragging.has(n.id),
+      })),
+    [graph, selected, placed, dragging],
+  );
+  const onNodesChange = useCallback((changes: NodeChangeset<Node>) => {
+    const pos = changes.getByType('position');
+    if (!pos.length) return;
+    setOffsets((m) => {
+      const next = new Map(m);
+      for (const c of pos) if (c.position) next.set(c.id, offsetFor(c.id, c.position, parentsRef.current, placedRef.current));
+      return next;
+    });
+    setDragging((d) => {
+      const next = new Set(d);
+      for (const c of pos) {
+        if (c.dragging) next.add(c.id);
+        else next.delete(c.id);
+      }
+      return next;
+    });
+  }, []);
   const { fitView } = useReactFlow();
 
-  const shape = graph.nodes.map((n) => n.id).join('|');
+  // Fit once React Flow has measured the nodes, and again when courses are added/removed or the
+  // depth changes. Expanding/collapsing a single course doesn't re-fit, so nothing jumps on screen.
+  const fitKey = `${targets.join(',')}|${opts.depth}|${opts.otherCampuses}`;
+  const initialized = useNodesInitialized();
   useEffect(() => {
-    const t = setTimeout(() => fitView({ duration: 350, padding: 0.12, maxZoom: 1.1 }), 60);
+    if (!initialized) return;
+    const t = setTimeout(() => fitView({ duration: 350, padding: 0.12, maxZoom: 1.1 }), 30);
     return () => clearTimeout(t);
-  }, [shape, fitView]);
+  }, [fitKey, initialized, fitView]);
+
+  // Re-fit when the panel itself changes size (window resize, side panel opening).
+  const wrapper = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = wrapper.current;
+    if (!el) return;
+    let t: ReturnType<typeof setTimeout>;
+    const ro = new ResizeObserver(() => {
+      clearTimeout(t);
+      t = setTimeout(() => fitView({ padding: 0.12, maxZoom: 1.1 }), 120);
+    });
+    ro.observe(el);
+    return () => {
+      clearTimeout(t);
+      ro.disconnect();
+    };
+  }, [fitView]);
 
   const actions = useMemo(
-    () => ({ onExpand: (code: string) => setOpts((o) => ({ ...o, expanded: new Set(o.expanded).add(code) })) }),
+    () => ({
+      onExpand: (code: string) =>
+        setOpts((o) => {
+          const collapsed = new Set(o.collapsed);
+          collapsed.delete(code);
+          return { ...o, collapsed, expanded: new Set(o.expanded).add(code) };
+        }),
+      onCollapse: (code: string) =>
+        setOpts((o) => {
+          const expanded = new Set(o.expanded);
+          expanded.delete(code);
+          return { ...o, expanded, collapsed: new Set(o.collapsed).add(code) };
+        }),
+      onToggleUnlocks: (code: string) =>
+        setOpts((o) => {
+          const current = o.unlockOverrides.get(code) ?? o.showUnlocks;
+          return { ...o, unlockOverrides: new Map(o.unlockOverrides).set(code, !current) };
+        }),
+    }),
     [setOpts],
   );
 
@@ -41,14 +130,15 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
 
   return (
     <GraphActionsContext.Provider value={actions}>
-      <div className="relative h-full w-full">
+      <div ref={wrapper} className="relative h-full w-full">
         <ReactFlow
           nodes={nodes}
           edges={graph.edges}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.12, maxZoom: 1.1 }}
-          nodesDraggable={false}
+          onNodesChange={onNodesChange}
+          nodesDraggable
           nodesConnectable={false}
           minZoom={0.1}
           maxZoom={2}
@@ -109,12 +199,27 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
               <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
-          <Toggle on={opts.showUnlocks} onClick={() => setOpts((o) => ({ ...o, showUnlocks: !o.showUnlocks }))}>
-            What it unlocks
+          <Toggle
+            on={opts.showUnlocks}
+            onClick={() => setOpts((o) => ({ ...o, showUnlocks: !o.showUnlocks, unlockOverrides: new Map() }))}
+          >
+            Postrequisites (all)
           </Toggle>
           <Toggle on={opts.otherCampuses} onClick={() => setOpts((o) => ({ ...o, otherCampuses: !o.otherCampuses }))}>
             All alternatives
           </Toggle>
+          {offsets.size > 0 && (
+            <button
+              onClick={() => {
+                setOffsets(new Map());
+                setTimeout(() => fitView({ duration: 350, padding: 0.12, maxZoom: 1.1 }), 30);
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-900/90 px-2.5 py-1.5 text-slate-300 backdrop-blur hover:text-white"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset layout
+            </button>
+          )}
         </div>
         </div>
 
@@ -132,8 +237,8 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
           <div className="text-slate-500">
             {courseCount} courses
             {graph.prunedAlternatives > 0 && ` · ${graph.prunedAlternatives} alternatives hidden`}
-            {graph.hiddenUnlocks > 0 && ` · +${graph.hiddenUnlocks} more unlocks in the side panel`}
-            {' · '}double-click a course to add it to the map
+            {graph.hiddenUnlocks > 0 && ` · +${graph.hiddenUnlocks} more postrequisites in the side panel`}
+            {' · '}drag to move (its subtree follows) · double-click a course to add it to the map
           </div>
         </div>
       </div>
@@ -163,4 +268,12 @@ function Legend({ className, children }: { className: string; children: React.Re
       {children}
     </span>
   );
+}
+
+function layoutOf(graph: GraphResult) {
+  return new Map(graph.nodes.map((n) => [n.id, n.position] as const));
+}
+
+function sizesOf(graph: GraphResult) {
+  return new Map<string, Size>(graph.nodes.map((n) => [n.id, { width: n.width ?? 0, height: n.height ?? 0 }]));
 }

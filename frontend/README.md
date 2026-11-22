@@ -18,6 +18,7 @@ npm run build
 - `src/graph.ts` turns the tree into a left-to-right graph with "one of" / "all of" nodes,
   hides other-campus/other-division alternatives and already-satisfied branches, and limits depth.
 - Several courses can be on the map at once (click results to add, × on a chip to remove).
+- On the graph: **+ / −** on a course's left edge shows/hides its prerequisites, the button on a selected course's right edge shows/hides its postrequisites, and nodes can be dragged — a course's prerequisites/postrequisites move with it, including ones expanded later. Expanding or hiding never moves what's already on screen; new courses go to their usual spot next to their course, which only shifts (as little as possible) if they'd overlap something (**Reset layout** returns to the automatic layout).
 - Completed courses are saved in localStorage; **Share** copies a link with `?course=A,BCompleted courses are saved in localStorage; **Share** copies a link with `?course=…&done=…`.done=…`.
 
 Known data gap: most year-long `Y` courses (e.g. MAT137Y1) are missing from the scrape. They still

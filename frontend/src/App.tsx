@@ -18,7 +18,7 @@ export default function App() {
   const [targets, setTargets] = useState<string[]>(readTargetsFromUrl);
   const [selected, setSelected] = useState(() => targets[targets.length - 1] ?? '');
   const [campus, setCampus] = useState<Campus | 'ALL'>('ALL');
-  const [opts, setOpts] = useState<GraphOptions>({ depth: 2, otherCampuses: false, showUnlocks: true, expanded: new Set() });
+  const [opts, setOpts] = useState<GraphOptions>({ depth: 2, otherCampuses: false, showUnlocks: true, unlockOverrides: new Map(), expanded: new Set(), collapsed: new Set() });
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -45,13 +45,13 @@ export default function App() {
   const showOnly = useCallback((code: string) => {
     setTargets([code]);
     setSelected(code);
-    setOpts((o) => ({ ...o, expanded: new Set() }));
+    setOpts((o) => ({ ...o, expanded: new Set(), collapsed: new Set() }));
   }, []);
 
   const clearTargets = useCallback(() => {
     setTargets([]);
     setSelected('');
-    setOpts((o) => ({ ...o, expanded: new Set() }));
+    setOpts((o) => ({ ...o, expanded: new Set(), collapsed: new Set() }));
   }, []);
 
   useEffect(() => {
@@ -99,7 +99,13 @@ export default function App() {
           </button>
         </header>
         <div className="min-h-0 flex-1">
-          <Sidebar catalog={catalog} done={done} targets={targets} campus={campus} setCampus={setCampus} onToggle={toggle} onAdd={addTarget} onClear={clear} />
+          <Sidebar catalog={catalog} done={done} targets={targets} campus={campus} setCampus={setCampus} onToggle={toggle} onAdd={addTarget}
+            onClear={clear}
+            selected={selected}
+            onSelect={setSelected}
+            onRemove={removeTarget}
+            onClearTargets={clearTargets}
+          />
         </div>
       </aside>
 
