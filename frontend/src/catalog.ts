@@ -22,13 +22,16 @@ export interface Course extends RawCourse {
   exclusionCodes: string[];
 }
 
-export type Status = 'completed' | 'available' | 'locked' | 'unknown';
+/** `equivalent`: not taken, but an equivalent course was (e.g. the same course on another campus). */
+export type Status = 'completed' | 'equivalent' | 'available' | 'locked' | 'unknown';
 
 export interface Catalog {
   courses: Map<string, Course>;
   list: Course[];
   /** course code -> courses that mention it in their prerequisites */
   unlocks: Map<string, string[]>;
+  /** course code -> courses that count as the same course for prerequisites (see findEquivalents) */
+  equivalents: Map<string, Set<string>>;
 }
 
 const CODE_RE = /[A-Z]{3}[A-Z0-9]\d{2}[HY]\d?/g;
@@ -82,15 +85,79 @@ export function buildCatalog(raw: RawCourse[]): Catalog {
       else unlocks.set(code, [r.code]);
     }
   }
-  return { courses, list: [...courses.values()], unlocks };
+  return { courses, list: [...courses.values()], unlocks, equivalents: findEquivalents(courses) };
+}
+
+/**
+ * Pairs of courses that count as the same course when checking prerequisites.
+ *
+ * The calendar's "exclusions" are NOT a safe source on their own: an exclusion only means
+ * "can't take both for credit" (CSC148H1 excludes CSC207H1, MAT223H1 excludes MAT224H1).
+ * Same-campus pairs with different numbers are often different courses that merely overlap
+ * (CSC108H1 / CSC111H1, MAT130H1 / MAT135H1, SPA301H1 / SPA305H1), so they never count.
+ * A pair counts only if it is linked by an exclusion, has the same subject, level and length
+ * (H/Y), neither is a prerequisite of the other, and either
+ *  - it has the same course number (CSC263H1 / CSC263H5 / CSCB63H3, CSC148H1 / CSCA48H3), or
+ *  - the courses are on different campuses and exclude each other (CSC311H5 / CSCC11H3).
+ * Enriched versions (CSC240H1 for CSC236H1) are left out: the calendar lists them explicitly.
+ */
+export function findEquivalents(courses: Map<string, Course>): Map<string, Set<string>> {
+  const eq = new Map<string, Set<string>>();
+  const link = (a: string, b: string) => {
+    if (!eq.has(a)) eq.set(a, new Set());
+    if (!eq.has(b)) eq.set(b, new Set());
+    eq.get(a)!.add(b);
+    eq.get(b)!.add(a);
+  };
+  const subject = (c: string) => c.slice(0, 3);
+  const number = (c: string) => c.slice(4, 6); // "CSC263H1" -> "63", "CSCB63H3" -> "63"
+  const weight = (c: string) => c[6]; // H or Y
+  const sameShape = (a: string, b: string) =>
+    subject(a) === subject(b) && courseLevel(a) === courseLevel(b) && weight(a) === weight(b);
+  const prereqOf = (a: string, b: string) => collectCodes(courses.get(b)?.req ?? null).has(a);
+
+  for (const a of courses.values()) {
+    for (const b of a.exclusionCodes) {
+      if (a.code === b || !sameShape(a.code, b)) continue;
+      if (prereqOf(a.code, b) || prereqOf(b, a.code)) continue;
+      const mutual = courses.get(b)?.exclusionCodes.includes(a.code) ?? false;
+      if (number(a.code) === number(b) || (mutual && campusOf(a.code) !== campusOf(b))) link(a.code, b);
+    }
+  }
+  return eq;
+}
+
+const satisfiedCache = new WeakMap<Catalog, WeakMap<Set<string>, Set<string>>>();
+
+/** Completed courses plus everything equivalent to them: use this for every prerequisite check. */
+export function satisfiedSet(catalog: Catalog, done: Set<string>): Set<string> {
+  let perCatalog = satisfiedCache.get(catalog);
+  if (!perCatalog) satisfiedCache.set(catalog, (perCatalog = new WeakMap()));
+  const cached = perCatalog.get(done);
+  if (cached) return cached;
+  const out = new Set(done);
+  for (const code of done) for (const e of catalog.equivalents.get(code) ?? []) out.add(e);
+  perCatalog.set(done, out);
+  return out;
+}
+
+/** Which completed course makes `code` count as done (for "equivalent" courses). */
+export function equivalentSource(catalog: Catalog, code: string, done: Set<string>): string | undefined {
+  for (const e of catalog.equivalents.get(code) ?? []) if (done.has(e)) return e;
+  return undefined;
 }
 
 export function courseStatus(catalog: Catalog, code: string, done: Set<string>): Status {
   if (done.has(code)) return 'completed';
+  const has = satisfiedSet(catalog, done);
+  if (has.has(code)) return 'equivalent';
   const c = catalog.courses.get(code);
   if (!c) return 'unknown';
-  return evaluate(c.req, done) ? 'available' : 'locked';
+  return evaluate(c.req, has) ? 'available' : 'locked';
 }
+
+/** completed or equivalent */
+export const isSatisfied = (s: Status) => s === 'completed' || s === 'equivalent';
 
 /** Course level as a number: 100, 200, ... (A/B/C/D at UTSC map to 100-400). */
 export function courseLevel(code: string): number {

@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { Check, ChevronLeft, ChevronRight, Lock, Minus, Plus, HelpCircle, Circle } from 'lucide-react';
+import { Check, CheckCheck, ChevronLeft, ChevronRight, Lock, Minus, Plus, HelpCircle, Circle } from 'lucide-react';
 import clsx from 'clsx';
 import type { CourseNodeData, GroupNodeData } from '../graph';
 import { useGraphActions } from './graphActions';
@@ -14,12 +14,14 @@ export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) 
       className={clsx(
         'group relative w-[210px] h-[62px] rounded-lg border px-3 py-2 text-left transition-shadow cursor-grab active:cursor-grabbing',
         status === 'completed' && 'bg-emerald-950/70 border-emerald-500/70',
+        status === 'equivalent' && 'bg-teal-950/60 border-teal-500/60',
         status === 'available' && 'bg-sky-950/70 border-sky-500/70',
         status === 'locked' && 'bg-slate-900 border-slate-700',
         status === 'unknown' && 'bg-slate-900/60 border-slate-600 border-dashed',
         focus && 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-slate-950',
         selected && !focus && 'ring-2 ring-slate-300/70',
-        data.role === 'unlock' && status === 'locked' && 'opacity-80',
+        data.route === true && !focus && !selected && 'ring-2 ring-amber-400/90 ring-offset-2 ring-offset-slate-950',
+        data.route === false ? 'opacity-25' : data.role === 'unlock' && status === 'locked' && 'opacity-80',
       )}
     >
       <Handle type="target" position={Position.Left} className={handle} />
@@ -88,6 +90,7 @@ export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) 
 export function StatusIcon({ status, className }: { status: CourseNodeData['status']; className?: string }) {
   const cls = clsx('h-3.5 w-3.5 shrink-0', className);
   if (status === 'completed') return <Check className={clsx(cls, 'text-emerald-400')} strokeWidth={3} />;
+  if (status === 'equivalent') return <CheckCheck className={clsx(cls, 'text-teal-400')} strokeWidth={2.5} />;
   if (status === 'available') return <Circle className={clsx(cls, 'text-sky-400')} strokeWidth={3} />;
   if (status === 'locked') return <Lock className={clsx(cls, 'text-slate-500')} />;
   return <HelpCircle className={clsx(cls, 'text-slate-500')} />;
@@ -98,6 +101,7 @@ export function GroupNode({ data }: NodeProps<Node<GroupNodeData>>) {
     <div
       className={clsx(
         'flex h-[24px] w-[64px] items-center justify-center rounded-full border text-[9px] font-bold uppercase tracking-wider',
+        data.route === false && 'opacity-25',
         data.satisfied
           ? 'border-emerald-500/70 bg-emerald-950 text-emerald-300'
           : data.op === 'or'

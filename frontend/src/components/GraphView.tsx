@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Background, Controls, ReactFlow, useNodesInitialized, useReactFlow, type Node, type NodeChangeset } from '@xyflow/react';
-import { Minus, Plus, RotateCcw, X } from 'lucide-react';
+import { Minus, Plus, RotateCcw, Route as RouteIcon, X } from 'lucide-react';
 import clsx from 'clsx';
 import { courseStatus, type Catalog } from '../catalog';
 import { buildGraph, type GraphOptions, type GraphResult } from '../graph';
 import { offsetFor, placeNodes, reconcileOffsets, type Offset, type Size } from '../placement';
+import { findRoute } from '../path';
 import { nodeTypes } from './nodes';
 import { GraphActionsContext } from './graphActions';
 import { StatusIcon } from './nodes';
@@ -20,10 +21,27 @@ interface Props {
   onAdd: (code: string) => void;
   onRemove: (code: string) => void;
   onClearTargets: () => void;
+  /** selected course whose fastest route is highlighted */
+  routeFor: string | null;
+  onShowRoute: (code: string | null) => void;
 }
 
-export function GraphView({ catalog, targets, done, opts, setOpts, selected, onSelect, onAdd, onRemove, onClearTargets }: Props) {
-  const graph = useMemo(() => buildGraph(catalog, targets, done, opts), [catalog, targets, done, opts]);
+export function GraphView({
+  catalog,
+  targets,
+  done,
+  opts,
+  setOpts,
+  selected,
+  onSelect,
+  onAdd,
+  onRemove,
+  onClearTargets,
+  routeFor,
+  onShowRoute,
+}: Props) {
+  const route = useMemo(() => (routeFor ? findRoute(catalog, routeFor, done) : null), [catalog, routeFor, done]);
+  const graph = useMemo(() => buildGraph(catalog, targets, done, opts, route), [catalog, targets, done, opts, route]);
   // Node positions relative to the node each one hangs off (see placement.ts): set by dragging,
   // and by keeping the existing layout stable whenever the graph changes.
   const [offsets, setOffsets] = useState<Map<string, Offset>>(() => new Map());
@@ -78,7 +96,7 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
 
   // Fit once React Flow has measured the nodes, and again when courses are added/removed or the
   // depth changes. Expanding/collapsing a single course doesn't re-fit, so nothing jumps on screen.
-  const fitKey = `${targets.join(',')}|${opts.depth}|${opts.otherCampuses}`;
+  const fitKey = `${targets.join(',')}|${opts.depth}|${opts.otherCampuses}|${routeFor}`;
   const initialized = useNodesInitialized();
   useEffect(() => {
     if (!initialized) return;
@@ -172,6 +190,18 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
               </button>
             </span>
           ))}
+          {route && (
+            <span className="flex items-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-950/80 py-1 pl-2 pr-1 text-amber-200 backdrop-blur">
+              <RouteIcon className="h-3 w-3" />
+              Route to <span className="font-mono font-semibold">{route.target}</span>
+              <span className="text-amber-300/70">
+                · {route.before.length} course{route.before.length === 1 ? '' : 's'} first
+              </span>
+              <button onClick={() => onShowRoute(null)} className="rounded p-0.5 hover:bg-amber-900" aria-label="Stop highlighting the route">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
           {targets.length > 1 && (
             <button onClick={onClearTargets} className="rounded-lg px-2 py-1 text-slate-500 hover:text-slate-200">
               Clear all
@@ -227,6 +257,7 @@ export function GraphView({ catalog, targets, done, opts, setOpts, selected, onS
         <div className="pointer-events-none absolute bottom-3 left-3 z-10 space-y-1.5 rounded-lg border border-slate-800 bg-slate-900/90 px-3 py-2 text-[11px] text-slate-400 backdrop-blur">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <Legend className="bg-emerald-400">Completed</Legend>
+            <Legend className="bg-teal-400">Equivalent done</Legend>
             <Legend className="bg-sky-400">Can take now</Legend>
             <Legend className="bg-slate-600">Locked</Legend>
             <span className="flex items-center gap-1.5">

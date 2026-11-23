@@ -1,7 +1,8 @@
 import dagre from 'dagre';
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
-import { campusOf, courseStatus, type Catalog, type Status } from './catalog';
+import { campusOf, courseStatus, satisfiedSet, type Catalog, type Status } from './catalog';
 import { collectCodes, evaluate, type Req } from './prereq';
+import type { Route } from './path';
 
 export interface GraphOptions {
   depth: number;
@@ -28,12 +29,15 @@ export interface CourseNodeData {
   role: 'prereq' | 'focus' | 'unlock';
   /** for courses on the map: how many postrequisites exist and whether they're drawn */
   postreqs?: { total: number; shown: boolean };
+  /** while a route is highlighted: on the route (true) or not (false) */
+  route?: boolean;
   [key: string]: unknown;
 }
 
 export interface GroupNodeData {
   op: 'and' | 'or';
   satisfied: boolean;
+  route?: boolean;
   [key: string]: unknown;
 }
 
@@ -61,6 +65,7 @@ const COLOR = {
   done: '#34d399',
   idle: '#64748b',
   unlock: '#818cf8',
+  route: '#fbbf24',
 };
 
 /** Which campus/division a subtree is being drawn for (the target it hangs off). */
@@ -69,11 +74,24 @@ interface Ctx {
   homeDivision: string | undefined;
 }
 
-export function buildGraph(catalog: Catalog, targets: string[], done: Set<string>, opts: GraphOptions): GraphResult {
+/**
+ * @param highlight a route to highlight (see path.ts): its courses are always drawn (even past the
+ *   depth limit or other-campus filtering), its links light up, and everything else is dimmed.
+ */
+export function buildGraph(
+  catalog: Catalog,
+  targets: string[],
+  done: Set<string>,
+  opts: GraphOptions,
+  highlight: Pick<Route, 'all' | 'links'> | null = null,
+): GraphResult {
+  const route = highlight?.all ?? null;
   const nodes = new Map<string, Node>();
   const edges = new Map<string, Edge>();
   const expandedCourses = new Set<string>();
   const targetSet = new Set(targets);
+  // completed courses + their equivalents: what prerequisite checks use
+  const has = satisfiedSet(catalog, done);
   const parents = new Map<string, string>();
   const setParent = (id: string, parent: string) => {
     if (!targetSet.has(id) && !parents.has(id)) parents.set(id, parent);
@@ -119,7 +137,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     const { home, homeDivision } = ctx;
     let items = req.items.map((i) => prune(i, ctx));
     if (req.kind === 'or') {
-      const met = items.find((i) => evaluate(i, done));
+      const met = items.find((i) => evaluate(i, has));
       if (met) {
         prunedAlternatives += items.length - 1;
         return met;
@@ -132,8 +150,9 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
           const d = catalog.courses.get(c)?.division;
           return !d || !homeDivision || d === homeDivision;
         };
+        const onRoute = (i: Req) => route !== null && [...collectCodes(i)].some((c) => route.has(c));
         for (const keep of [(c: string) => sameCampus(c) && sameDivision(c), sameCampus]) {
-          const local = items.filter((i) => [...collectCodes(i)].every(keep));
+          const local = items.filter((i) => onRoute(i) || [...collectCodes(i)].every(keep));
           if (local.length > 0) {
             if (local.length < items.length) {
               prunedAlternatives += items.length - local.length;
@@ -151,9 +170,10 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     if (expandedCourses.has(code)) return;
     const course = catalog.courses.get(code);
     if (!course?.req) return;
-    if (!targetSet.has(code) && done.has(code)) return; // no need to show how you got there
+    if (!targetSet.has(code) && has.has(code)) return; // no need to show how you got there
     const data = nodes.get(code)!.data as CourseNodeData;
-    if (opts.collapsed.has(code) || (depth >= opts.depth && !opts.expanded.has(code))) {
+    const forced = route !== null && route.has(code) && [...collectCodes(course.req)].some((c) => route.has(c));
+    if (opts.collapsed.has(code) || (depth >= opts.depth && !opts.expanded.has(code) && !forced)) {
       data.truncated = true;
       return;
     }
@@ -166,7 +186,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     if (req.kind === 'course') {
       addCourse(req.code, 'prereq');
       setParent(req.code, target);
-      addEdge(req.code, target, done.has(req.code));
+      addEdge(req.code, target, has.has(req.code));
       expand(req.code, depth + 1, ctx);
       return;
     }
@@ -178,7 +198,7 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     const base = `g:${target}:${req.kind}:${[...collectCodes(req)].join(',')}`;
     let id = base;
     for (let n = 2; nodes.has(id); n++) id = `${base}#${n}`;
-    const satisfied = evaluate(req, done);
+    const satisfied = evaluate(req, has);
     nodes.set(id, {
       id,
       type: 'reqgroup',
@@ -228,7 +248,63 @@ export function buildGraph(catalog: Catalog, targets: string[], done: Set<string
     }
   }
 
+  if (highlight) highlightRoute(nodes, edges, highlight);
+
   return { ...layout([...nodes.values()], [...edges.values()]), hiddenUnlocks, prunedAlternatives, parents };
+}
+
+/**
+ * Mark the route's courses, and the exact arrows (and "one of"/"all of" markers) for each link the
+ * route uses, e.g. MAT149H1 -> [all of] -> [one of] -> STA237H1. Everything else is dimmed.
+ */
+function highlightRoute(nodes: Map<string, Node>, edges: Map<string, Edge>, route: Pick<Route, 'all' | 'links'>) {
+  const onNodes = new Set<string>();
+  for (const n of nodes.values()) if (n.type === 'course' && route.all.has(n.id)) onNodes.add(n.id);
+
+  const outOf = new Map<string, Edge[]>();
+  for (const e of edges.values()) {
+    if (e.style?.strokeDasharray) continue; // postrequisite arrows are never part of a route
+    const list = outOf.get(e.source);
+    if (list) list.push(e);
+    else outOf.set(e.source, [e]);
+  }
+  // From the prerequisite, follow each arrow through any markers (each marker has exactly one
+  // outgoing arrow) and keep the paths that end at the course that needs it.
+  const onEdges = new Set<string>();
+  for (const [from, to] of route.links) {
+    for (const first of outOf.get(from) ?? []) {
+      const path = [first];
+      let cur = first.target;
+      while (cur !== to && nodes.get(cur)?.type === 'reqgroup' && path.length < 50) {
+        const next = outOf.get(cur)?.[0];
+        if (!next) break;
+        path.push(next);
+        cur = next.target;
+      }
+      if (cur !== to) continue;
+      for (const e of path) {
+        onEdges.add(e.id);
+        onNodes.add(e.target);
+      }
+    }
+  }
+
+  for (const n of nodes.values()) (n.data as CourseNodeData | GroupNodeData).route = onNodes.has(n.id);
+  for (const [id, e] of edges) {
+    const on = onEdges.has(id);
+    edges.set(
+      id,
+      on
+        ? {
+            ...e,
+            animated: true,
+            style: { ...e.style, stroke: COLOR.route, strokeWidth: 2.5 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: COLOR.route, width: 14, height: 14 },
+            zIndex: 1,
+          }
+        : { ...e, style: { ...e.style, opacity: 0.15 } },
+    );
+  }
 }
 
 function layout(nodes: Node[], edges: Edge[]) {

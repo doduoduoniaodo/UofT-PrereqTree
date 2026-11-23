@@ -20,6 +20,9 @@ export default function App() {
   const [campus, setCampus] = useState<Campus | 'ALL'>('ALL');
   const [opts, setOpts] = useState<GraphOptions>({ depth: 2, otherCampuses: false, showUnlocks: true, unlockOverrides: new Map(), expanded: new Set(), collapsed: new Set() });
   const [copied, setCopied] = useState(false);
+  // course whose fastest route is highlighted; only meaningful while it's on the map
+  const [routeFor, setRouteFor] = useState<string | null>(null);
+  const activeRoute = routeFor && targets.includes(routeFor) ? routeFor : null;
 
   useEffect(() => {
     loadCatalog()
@@ -41,6 +44,14 @@ export default function App() {
     },
     [targets, selected],
   );
+
+  const showRoute = useCallback((code: string | null) => {
+    if (code) {
+      setTargets((t) => (t.includes(code) ? t : [...t, code]));
+      setSelected(code);
+    }
+    setRouteFor(code);
+  }, []);
 
   const showOnly = useCallback((code: string) => {
     setTargets([code]);
@@ -99,7 +110,14 @@ export default function App() {
           </button>
         </header>
         <div className="min-h-0 flex-1">
-          <Sidebar catalog={catalog} done={done} targets={targets} campus={campus} setCampus={setCampus} onToggle={toggle} onAdd={addTarget}
+          <Sidebar
+            catalog={catalog}
+            done={done}
+            targets={targets}
+            campus={campus}
+            setCampus={setCampus}
+            onToggle={toggle}
+            onAdd={addTarget}
             onClear={clear}
             selected={selected}
             onSelect={setSelected}
@@ -123,6 +141,8 @@ export default function App() {
               onAdd={addTarget}
               onRemove={removeTarget}
               onClearTargets={clearTargets}
+              routeFor={activeRoute}
+              onShowRoute={showRoute}
             />
           </ReactFlowProvider>
         ) : (
@@ -142,6 +162,8 @@ export default function App() {
             onAdd={addTarget}
             onRemove={removeTarget}
             onShowOnly={showOnly}
+            routeFor={activeRoute}
+            onShowRoute={showRoute}
           />
         </aside>
       )}

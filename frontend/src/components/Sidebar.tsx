@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import Fuse from 'fuse.js';
 import { Check, ChevronDown, Search, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
-import { campusOf, courseLevel, courseStatus, type Campus, type Catalog, type Course } from '../catalog';
+import { campusOf, courseLevel, courseStatus, satisfiedSet, type Campus, type Catalog, type Course } from '../catalog';
 import { collectCodes } from '../prereq';
 import { StatusIcon } from './nodes';
 
@@ -30,6 +30,8 @@ const CAMPUSES: { id: Campus | 'ALL'; label: string }[] = [
 ];
 
 const CODE_LIKE = /^[a-z]{2,4}[a-z0-9]?\d{0,2}[hy]?\d?$/i;
+/** a complete course code, e.g. MAT137Y1 */
+const FULL_CODE = /^[A-Z]{3}[A-Z0-9]\d{2}[HY]\d$/;
 
 export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, onAdd, onClear, selected, onSelect, onRemove, onClearTargets }: Props) {
   const [tab, setTab] = useState<'search' | 'mine'>('search');
@@ -55,17 +57,25 @@ export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, o
     return found.filter(inCampus).slice(0, 80);
   }, [query, catalog, fuse, campus]);
 
+  // A full code that isn't in the data (e.g. MAT137Y1: many year-long courses are missing).
+  // It can still be added to the map or ticked as completed.
+  const missingCode = useMemo(() => {
+    const up = query.trim().replace(/\s+/g, '').toUpperCase();
+    return FULL_CODE.test(up) && !catalog.courses.has(up) ? up : null;
+  }, [query, catalog]);
+
   // Courses you can now take that build on something you've completed.
   const ready = useMemo(() => {
     if (done.size === 0) return [];
+    const has = satisfiedSet(catalog, done); // completed + equivalents
     const out: Course[] = [];
     const seen = new Set<string>();
-    for (const code of done) {
+    for (const code of has) {
       for (const u of catalog.unlocks.get(code) || []) {
         if (seen.has(u)) continue;
         seen.add(u);
         const c = catalog.courses.get(u);
-        if (!c || done.has(u)) continue;
+        if (!c || has.has(u)) continue;
         if (campus !== 'ALL' && c.campus !== campus) continue;
         if (courseStatus(catalog, u, done) === 'available') out.push(c);
       }
@@ -133,10 +143,15 @@ export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, o
       <div className="flex-1 overflow-y-auto">
         {tab === 'search' ? (
           query.trim() ? (
-            results.length ? (
-              results.map((c) => (
-                <CourseRow key={c.code} catalog={catalog} course={c} done={done} active={targets.includes(c.code)} onToggle={onToggle} onFocus={onAdd} />
-              ))
+            results.length || missingCode ? (
+              <>
+                {missingCode && (
+                  <MissingRow code={missingCode} isDone={done.has(missingCode)} onToggle={onToggle} onFocus={onAdd} />
+                )}
+                {results.map((c) => (
+                  <CourseRow key={c.code} catalog={catalog} course={c} done={done} active={targets.includes(c.code)} onToggle={onToggle} onFocus={onAdd} />
+                ))}
+              </>
             ) : (
               <Empty>No courses match “{query}”{campus !== 'ALL' && ' on this campus'}.</Empty>
             )
@@ -173,7 +188,7 @@ export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, o
               return c ? (
                 <CourseRow key={code} catalog={catalog} course={c} done={done} active={targets.includes(code)} onToggle={onToggle} onFocus={onAdd} />
               ) : (
-                <MissingRow key={code} code={code} onToggle={onToggle} onFocus={onAdd} />
+                <MissingRow key={code} code={code} isDone onToggle={onToggle} onFocus={onAdd} />
               );
             })}
           </div>
@@ -292,15 +307,25 @@ function CourseRow({
   );
 }
 
-function MissingRow({ code, onToggle, onFocus }: { code: string; onToggle: (c: string) => void; onFocus: (c: string) => void }) {
+function MissingRow({
+  code,
+  isDone,
+  onToggle,
+  onFocus,
+}: {
+  code: string;
+  isDone: boolean;
+  onToggle: (c: string) => void;
+  onFocus: (c: string) => void;
+}) {
   return (
     <div onClick={() => onFocus(code)} className="flex cursor-pointer items-center gap-2.5 px-4 py-2.5 hover:bg-slate-800/50">
-      <StatusIcon status="completed" />
+      <StatusIcon status={isDone ? 'completed' : 'unknown'} />
       <div className="min-w-0 flex-1">
         <span className="font-mono text-[13px] font-semibold text-slate-100">{code}</span>
         <span className="ml-2 text-[10px] text-slate-500">{campusOf(code)} · not in catalog data</span>
       </div>
-      <DoneButton isDone onClick={() => onToggle(code)} />
+      <DoneButton isDone={isDone} onClick={() => onToggle(code)} />
     </div>
   );
 }
