@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, Check, Crosshair, ExternalLink, Minus, Plus, Route as RouteIcon, X } from 'lucide-react';
+import { AlertTriangle, Check, Crosshair, ExternalLink, HelpCircle, Minus, Plus, Route as RouteIcon, X } from 'lucide-react';
 import clsx from 'clsx';
 import { CAMPUS_LABEL, campusOf, courseStatus, equivalentSource, isSatisfied, satisfiedSet, type Catalog, type Status } from '../catalog';
-import { evaluate, type Req } from '../prereq';
+import { checksFor, evaluate, formatGrade, type Req, type ReqNote } from '../prereq';
 import { findRoute } from '../path';
 import { StatusIcon } from './nodes';
 
@@ -34,6 +34,8 @@ export function Inspector({ catalog, code, targets, done, onToggle, onSelect, on
   const course = catalog.courses.get(code);
   const status = courseStatus(catalog, code, done);
   const isDone = done.has(code);
+  // things we can't verify for a course you otherwise qualify for (grade minimums, program, ...)
+  const checks = status === 'available' && course ? [...checksFor(course.req, satisfiedSet(catalog, done)), ...course.conditions] : [];
 
   return (
     <div className="space-y-5 p-5">
@@ -96,6 +98,18 @@ export function Inspector({ catalog, code, targets, done, onToggle, onSelect, on
             Show only this course's tree
           </button>
         )}
+        {checks.length > 0 && (
+          <div className="mt-3 rounded-lg border border-amber-900/70 bg-amber-950/30 p-2.5">
+            <p className="text-[11px] font-medium text-amber-200">
+              {course?.req ? 'You have the prerequisite courses. Before enrolling, also check:' : "Before enrolling, check (these can't be verified here):"}
+            </p>
+            <div className="mt-1">
+              {checks.map((c) => (
+                <NoteRow key={c} text={c} />
+              ))}
+            </div>
+          </div>
+        )}
         {status === 'equivalent' && (
           <p className="mt-3 rounded-lg border border-teal-900 bg-teal-950/40 p-2.5 text-[11px] leading-relaxed text-teal-200/90">
             You completed <span className="font-mono font-semibold">{equivalentSource(catalog, code, done)}</span>, the same course on
@@ -116,17 +130,20 @@ export function Inspector({ catalog, code, targets, done, onToggle, onSelect, on
       {course && (
         <>
           <Section title="Prerequisites">
-            {course.req ? (
+            {course.req || course.conditions.length ? (
               <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-                <ReqTree req={course.req} done={done} catalog={catalog} onSelect={onSelect} root />
+                {course.req && <ReqTree req={course.req} done={done} catalog={catalog} onSelect={onSelect} root />}
+                {course.conditions.map((c) => (
+                  <NoteRow key={c} text={c} />
+                ))}
               </div>
             ) : (
               !course.prereq && <p className="text-xs text-slate-500">None</p>
             )}
             {course.reqNotes && (
-              <p className="mt-2 flex gap-1.5 text-[11px] text-amber-300/90">
-                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
-                Also has requirements that can't be checked automatically — read the calendar text.
+              <p className="mt-2 flex gap-1.5 text-[11px] text-slate-500">
+                <HelpCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-400/80" />
+                Marks a requirement that can't be checked automatically; check it yourself.
               </p>
             )}
             {course.prereq && <RawText text={course.prereq} />}
@@ -248,7 +265,7 @@ function ReqTree({
 }) {
   if (req.kind === 'course') {
     const status = courseStatus(catalog, req.code, done);
-    return (
+    const row = (
       <button onClick={() => onSelect(req.code)} className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-800">
         <StatusIcon status={isSatisfied(status) || status === 'unknown' ? status : 'locked'} />
         <span
@@ -259,8 +276,20 @@ function ReqTree({
         >
           {req.code}
         </span>
+        {req.grade && <GradeBadge grade={req.grade} />}
         <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500">{catalog.courses.get(req.code)?.title}</span>
       </button>
+    );
+    if (!req.notes?.length) return row;
+    return (
+      <div>
+        {row}
+        <div className="ml-5">
+          {req.notes.map((n) => (
+            <NoteRow key={n.text} text={n.text} prefix={notePrefix(n)} />
+          ))}
+        </div>
+      </div>
     );
   }
   const ok = evaluate(req, satisfiedSet(catalog, done));
@@ -273,7 +302,34 @@ function ReqTree({
       {req.items.map((r, i) => (
         <ReqTree key={i} req={r} done={done} catalog={catalog} onSelect={onSelect} />
       ))}
+      {req.notes?.map((n) => (
+        // in a "one of" list an alternative is just another option; elsewhere say how it applies
+        <NoteRow key={n.text} text={n.text} prefix={(n.mode === 'or') === (req.kind === 'or') ? undefined : notePrefix(n)} />
+      ))}
     </div>
+  );
+}
+
+const notePrefix = (n: ReqNote) => (n.mode === 'also' ? 'Also:' : 'Or:');
+
+/** A requirement we can't check automatically. */
+function NoteRow({ text, prefix }: { text: string; prefix?: string }) {
+  return (
+    <div className="flex gap-2 px-1 py-0.5 text-[11px] leading-snug" title="Can't be checked automatically; check it yourself">
+      <HelpCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-400/80" />
+      <span className="text-slate-300">
+        {prefix && <span className="mr-1 font-semibold text-amber-300/90">{prefix}</span>}
+        {text}
+      </span>
+    </div>
+  );
+}
+
+function GradeBadge({ grade }: { grade: string }) {
+  return (
+    <span className="shrink-0 rounded bg-amber-950 px-1 font-mono text-[10px] font-semibold text-amber-300" title={`Needs ${grade} or higher in this course`}>
+      {formatGrade(grade)}
+    </span>
   );
 }
 
@@ -294,6 +350,17 @@ function RouteSection({
   onShowRoute: (code: string | null) => void;
 }) {
   const route = useMemo(() => findRoute(catalog, code, done), [catalog, code, done]);
+  // grade minimums and conditions on the branches the route uses, per course still to take
+  const along = useMemo(() => {
+    const assumed = new Set([...satisfiedSet(catalog, done), ...route.all]);
+    return route.steps
+      .flat()
+      .map((c) => {
+        const course = catalog.courses.get(c);
+        return { c, items: course ? [...checksFor(course.req, assumed), ...course.conditions] : [] };
+      })
+      .filter((x) => x.items.length > 0);
+  }, [catalog, done, route]);
   if (!route.possible) {
     return (
       <Section title="Fastest route">
@@ -345,13 +412,23 @@ function RouteSection({
             Builds on: <span className="font-mono text-emerald-400/90">{route.uses.join(', ')}</span>
           </p>
         )}
-        {(route.unchecked.length > 0 || route.unknown.length > 0) && (
+        {along.length > 0 && (
+          <div className="mt-2.5">
+            <p className="text-[11px] font-medium text-amber-200/90">Along the way, check:</p>
+            {along.map(({ c, items }) => (
+              <div key={c} className="mt-1 flex gap-2 text-[11px] leading-snug">
+                <button onClick={() => onSelect(c)} className="shrink-0 font-mono font-semibold text-slate-200 hover:underline">
+                  {c}
+                </button>
+                <span className="text-slate-400">{items.join(' · ')}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {route.unknown.length > 0 && (
           <p className="mt-2 flex gap-1.5 text-[11px] text-amber-300/90">
             <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
-            <span>
-              {route.unknown.length > 0 && <>Not in the data (prerequisites unknown): {route.unknown.join(', ')}. </>}
-              {route.unchecked.length > 0 && <>Also check the calendar text for {route.unchecked.join(', ')}.</>}
-            </span>
+            <span>Not in the data (prerequisites unknown): {route.unknown.join(', ')}.</span>
           </p>
         )}
         <button

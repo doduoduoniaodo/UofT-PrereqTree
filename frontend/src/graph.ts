@@ -1,7 +1,7 @@
 import dagre from 'dagre';
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import { campusOf, courseStatus, satisfiedSet, type Catalog, type Status } from './catalog';
-import { collectCodes, evaluate, type Req } from './prereq';
+import { allNotes, collectCodes, evaluate, formatGrade, type Req } from './prereq';
 import type { Route } from './path';
 
 export interface GraphOptions {
@@ -26,6 +26,8 @@ export interface CourseNodeData {
   truncated: boolean;
   /** its prerequisites are drawn (so they can be hidden) */
   prereqsShown: boolean;
+  /** requirements that can't be checked automatically (program, credits, permission, ...) */
+  conditions: string[];
   role: 'prereq' | 'focus' | 'unlock';
   /** for courses on the map: how many postrequisites exist and whether they're drawn */
   postreqs?: { total: number; shown: boolean };
@@ -108,6 +110,7 @@ export function buildGraph(
       data: {
         code,
         title: c ? c.title : 'Not in the catalog data',
+        conditions: c ? [...c.conditions, ...allNotes(c.req)] : [],
         status: courseStatus(catalog, code, done),
         focus: targetSet.has(code),
         truncated: false,
@@ -117,7 +120,7 @@ export function buildGraph(
     });
   };
 
-  const addEdge = (source: string, target: string, satisfied: boolean, dashed = false) => {
+  const addEdge = (source: string, target: string, satisfied: boolean, dashed = false, grade?: string) => {
     const id = `${source}->${target}`;
     if (edges.has(id)) return;
     const color = dashed ? COLOR.unlock : satisfied ? COLOR.done : COLOR.idle;
@@ -128,6 +131,15 @@ export function buildGraph(
       type: 'default',
       style: { stroke: color, strokeWidth: satisfied ? 2 : 1.5, strokeDasharray: dashed ? '5 4' : undefined },
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
+      // grade minimum on this prerequisite, e.g. "≥60%"
+      ...(grade && {
+        label: formatGrade(grade),
+        labelStyle: { fill: '#fcd34d', fontSize: 10, fontWeight: 600, fontFamily: 'ui-monospace, monospace' },
+        labelShowBg: true,
+        labelBgStyle: { fill: '#1c1917', stroke: '#92400e', strokeWidth: 1 },
+        labelBgPadding: [4, 2] as [number, number],
+        labelBgBorderRadius: 4,
+      }),
     });
   };
 
@@ -186,7 +198,7 @@ export function buildGraph(
     if (req.kind === 'course') {
       addCourse(req.code, 'prereq');
       setParent(req.code, target);
-      addEdge(req.code, target, has.has(req.code));
+      addEdge(req.code, target, has.has(req.code), false, req.grade);
       expand(req.code, depth + 1, ctx);
       return;
     }
@@ -302,9 +314,15 @@ function highlightRoute(nodes: Map<string, Node>, edges: Map<string, Edge>, rout
             markerEnd: { type: MarkerType.ArrowClosed, color: COLOR.route, width: 14, height: 14 },
             zIndex: 1,
           }
-        : { ...e, style: { ...e.style, opacity: 0.15 } },
+        : dimmed(e),
     );
   }
+}
+
+/** An arrow that's not on the route: faded, and without its grade label (which would float on its own). */
+function dimmed(e: Edge): Edge {
+  const { label: _label, labelStyle: _ls, labelShowBg: _lsb, labelBgStyle: _lbs, labelBgPadding: _lbp, labelBgBorderRadius: _lbr, ...rest } = e;
+  return { ...rest, style: { ...e.style, opacity: 0.15 } };
 }
 
 function layout(nodes: Node[], edges: Edge[]) {

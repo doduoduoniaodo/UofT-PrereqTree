@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectCodes, evaluate, formatReq, parsePrereq } from './prereq';
+import { allNotes, checksFor, collectCodes, evaluate, formatReq, parsePrereq, type Req } from './prereq';
 
 /** Parse and render as "A AND (B OR C)" for compact assertions. */
 const fmt = (text: string) => formatReq(parsePrereq(text).req);
@@ -80,7 +80,7 @@ describe('parsePrereq — free-text requirements', () => {
   });
 
   it('handles empty text', () => {
-    expect(parsePrereq('')).toEqual({ req: null, hasNotes: false });
+    expect(parsePrereq('')).toEqual({ req: null, hasNotes: false, conditions: [] });
   });
 
   it('resolves codes without a campus digit', () => {
@@ -110,5 +110,117 @@ describe('evaluate / collectCodes', () => {
     expect([...collectCodes(csc236)].sort()).toEqual(
       ['CSC111H1', 'CSC148H1', 'CSC148H5', 'CSC165H1', 'CSCA48H3', 'CSCA67H3', 'MAT102H5', 'MATA67H3'].sort(),
     );
+  });
+});
+
+describe('grade minimums', () => {
+  const grades = (text: string) => {
+    const out: Record<string, string> = {};
+    const walk = (r: Req | null) => {
+      if (!r) return;
+      if (r.kind === 'course') {
+        if (r.grade) out[r.code] = r.grade;
+      } else r.items.forEach(walk);
+    };
+    walk(parsePrereq(text).req);
+    return out;
+  };
+
+  it('reads "60% or higher in X"', () => {
+    expect(grades('60% or higher in CSC148H1/ 60% or higher in CSC111H1')).toEqual({ CSC148H1: '60%', CSC111H1: '60%' });
+  });
+
+  it('reads "a minimum grade of 60% in X" and "Minimum 70% in X"', () => {
+    expect(grades('CHM110H5 and a minimum grade of 60% in CHM120H5')).toEqual({ CHM120H5: '60%' });
+    expect(grades('Minimum 70% in ARC100H1')).toEqual({ ARC100H1: '70%' });
+  });
+
+  it('reads "X (70% or higher)", "X(70%)" and "X (minimum of 60%)"', () => {
+    expect(grades('CSC110Y1 (70% or higher)')).toEqual({ CSC110Y1: '70%' });
+    expect(grades('MAT133Y1(70%)/ MAT137Y1')).toEqual({ MAT133Y1: '70%' });
+    expect(grades('EAS151H1 (minimum of 60%) or equivalent')).toEqual({ EAS151H1: '60%' });
+  });
+
+  it('reads "X with a final grade of 80%"', () => {
+    expect(grades('ARC401H1 with a final grade of 80% and permission of the Program Director')).toEqual({ ARC401H1: '80%' });
+  });
+
+  it('reads letter grades', () => {
+    expect(grades('a minimum grade of B- in CSC148H1')).toEqual({ CSC148H1: 'B-' });
+  });
+});
+
+describe('conditions that cannot be checked', () => {
+  const notes = (text: string) => parsePrereq(text).req?.notes;
+
+  it('keeps an extra requirement next to the courses it goes with', () => {
+    const r = parsePrereq('ARC401H1 with a final grade of 80% and permission of the Program Director').req!;
+    expect(r).toMatchObject({ kind: 'course', code: 'ARC401H1', grade: '80%' });
+    expect(r.notes).toEqual([{ text: 'Permission of the Program Director', mode: 'also' }]);
+  });
+
+  it('keeps an alternative way in as an "or" condition', () => {
+    expect(notes('PRT100Y1/ PRT102H1 or placement test')).toEqual([{ text: 'Placement test', mode: 'or' }]);
+  });
+
+  it('keeps a run of conditions as one sentence', () => {
+    expect(notes('CSCB36H3 and [CGPA of at least 3.5, or enrolment in a CSC Subject POSt]')).toEqual([
+      { text: 'CGPA of at least 3.5, or enrolment in a CSC Subject POSt', mode: 'also' },
+    ]);
+  });
+
+  it('does not split a condition at "and"', () => {
+    const r = parsePrereq('[Enrolment in the Major program in Media and Communication Studies and MDSA11H3 and MDSA13H3]').req!;
+    expect(r.notes).toEqual([{ text: 'Enrolment in the Major program in Media and Communication Studies', mode: 'also' }]);
+  });
+
+  it('shows a condition needed with every course once, on the group', () => {
+    const r = parsePrereq('8.0 credits including VPAB13H3 and VPAB16H3').req!;
+    expect(formatReq(r)).toBe('VPAB13H3 AND VPAB16H3');
+    expect(r.notes).toEqual([{ text: '8.0 credits', mode: 'also' }]);
+  });
+
+  it('reports standalone conditions when no courses are named', () => {
+    expect(parsePrereq('1.0 credit in POL/ JPA/ JPF courses').conditions).toEqual(['1.0 credit in POL/ JPA/ JPF courses']);
+  });
+
+  it('reads "X (or Y and Z)" as an alternative', () => {
+    expect(fmt('AST320H1 (or AST221H1 and AST222H1)')).toBe('AST320H1 OR (AST221H1 AND AST222H1)');
+  });
+
+  it('lists every condition in a tree', () => {
+    expect(allNotes(parsePrereq('CSCB36H3 and [CGPA of at least 3.5]; CSCA67H3 or placement test').req)).toEqual([
+      'CGPA of at least 3.5',
+      'Placement test',
+    ]);
+  });
+
+  it('keeps neighbouring alternatives together without stray brackets', () => {
+    expect(notes('CSCB36H3 and [CGPA of at least 3.5] or placement test')).toEqual([
+      { text: 'CGPA of at least 3.5 or placement test', mode: 'also' },
+    ]);
+  });
+});
+
+describe('checksFor (what to double-check before enrolling)', () => {
+  const req = parsePrereq(
+    '(60% or higher in CSC148H1, 60% or higher in CSC165H1)/ 60% or higher in CSC111H1; enrolment in a CSC program or permission of the instructor',
+  ).req;
+
+  it('lists grade minimums on the branch you actually satisfy', () => {
+    expect(checksFor(req, new Set(['CSC111H1']))).toContain('≥60% in CSC111H1');
+    expect(checksFor(req, new Set(['CSC111H1']))).not.toContain('≥60% in CSC148H1');
+    expect(checksFor(req, new Set(['CSC148H1', 'CSC165H1']))).toEqual(
+      expect.arrayContaining(['≥60% in CSC148H1', '≥60% in CSC165H1']),
+    );
+  });
+
+  it('lists conditions needed in addition, but not alternatives', () => {
+    const checks = checksFor(
+      parsePrereq('CSCB36H3 and [enrolment in a CSC Subject POSt]; CSCA67H3 or placement test').req,
+      new Set(['CSCB36H3', 'CSCA67H3']),
+    );
+    expect(checks).toContain('Enrolment in a CSC Subject POSt');
+    expect(checks).not.toContain('Placement test');
   });
 });

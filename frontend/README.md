@@ -13,8 +13,13 @@ npm run build
 
 - `scripts/build-data.mjs` slims `backend/data/courses.json` into `public/courses.json` (fetched at runtime, not bundled).
 - `src/prereq.ts` parses the calendar's prerequisite text into an AND/OR tree
-  (`/` = or, `,` `;` = and, `and`/`or` words, `()` / `[]` groups, grade qualifiers stripped).
-  Free-text requirements (credit counts, program enrolment) can't be checked and are flagged instead.
+  (`/` = or, `,` `;` = and, `and`/`or` words, `()` / `[]` groups).
+  Grade minimums ("60% or higher in CSC148H1", "CSC110Y1 (70% or higher)") are kept on the course
+  they apply to and shown as **≥60%** badges (side panel, and on the arrow in the graph).
+  Requirements that can't be checked (credit counts, program enrolment, permission) are kept as
+  **?** conditions where they apply — "also needed" or "or, alternatively" — and never block a course.
+  A course you qualify for lists what to double-check before enrolling; the fastest route lists them
+  along the way.
   The scraped `prereqCodes` field is ignored — it is wrong for ~1,000 courses.
 - `src/catalog.ts` builds the course index and works out **equivalent courses** — the same course on
   another campus (CSC263H1 / CSC263H5 / CSCB63H3). Completing one counts for the others ("Counts as

@@ -264,6 +264,16 @@ export function GraphView({
               <span className="rounded-full border border-amber-500/60 px-1 text-[8px] font-bold uppercase text-amber-300">one of</span>
               any one is enough
             </span>
+            <span className="flex items-center gap-1.5">
+              <span className="rounded border border-amber-800 bg-stone-900 px-1 font-mono text-[9px] font-semibold text-amber-300">≥60%</span>
+              grade needed
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-amber-600/70 bg-amber-950 text-[9px] font-bold text-amber-300">
+                ?
+              </span>
+              other requirements
+            </span>
           </div>
           <div className="text-slate-500">
             {courseCount} courses

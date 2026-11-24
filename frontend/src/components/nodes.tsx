@@ -30,6 +30,14 @@ export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) 
         <span className="font-mono text-[13px] font-semibold tracking-tight text-slate-100">{data.code}</span>
       </div>
       <div className="mt-0.5 text-[11px] leading-tight text-slate-400 line-clamp-2">{data.title}</div>
+      {data.conditions.length > 0 && (
+        <span
+          title={`Also has requirements that can't be checked automatically:\n• ${data.conditions.join('\n• ')}`}
+          className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-amber-600/70 bg-amber-950 text-[10px] font-bold text-amber-300"
+        >
+          ?
+        </span>
+      )}
       {data.truncated ? (
         <button
           title="Show this course's prerequisites"

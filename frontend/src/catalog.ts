@@ -18,6 +18,8 @@ export interface Course extends RawCourse {
   req: Req | null;
   /** prereq text contains requirements we can't check (credits, program enrolment, ...) */
   reqNotes: boolean;
+  /** standalone conditions when the prerequisite names no courses, e.g. "1.0 credit in POL courses" */
+  conditions: string[];
   coreqReq: Req | null;
   exclusionCodes: string[];
 }
@@ -70,11 +72,12 @@ export function buildCatalog(raw: RawCourse[]): Catalog {
   const courses = new Map<string, Course>();
   const unlocks = new Map<string, string[]>();
   for (const r of raw) {
-    const { req, hasNotes } = parsePrereq(r.prereq, resolve);
+    const { req, hasNotes, conditions } = parsePrereq(r.prereq, resolve);
     const course: Course = {
       ...r,
       req,
       reqNotes: hasNotes,
+      conditions,
       coreqReq: parsePrereq(r.coreq, resolve).req,
       exclusionCodes: [...new Set((r.exclusion.match(CODE_RE) || []).map(resolve))],
     };
