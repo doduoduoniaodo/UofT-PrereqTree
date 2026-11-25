@@ -145,6 +145,11 @@ describe('grade minimums', () => {
     expect(grades('ARC401H1 with a final grade of 80% and permission of the Program Director')).toEqual({ ARC401H1: '80%' });
   });
 
+  it('applies a grade before brackets to every course inside', () => {
+    expect(grades('60% or higher in (CSC148H1/ CSC148H5), CSC165H1')).toEqual({ CSC148H1: '60%', CSC148H5: '60%' });
+    expect(parsePrereq('60% or higher in (CSC148H1/ CSC148H5)').hasNotes).toBe(false);
+  });
+
   it('reads letter grades', () => {
     expect(grades('a minimum grade of B- in CSC148H1')).toEqual({ CSC148H1: 'B-' });
   });

@@ -55,15 +55,43 @@ type Tok = Span &
 const PCT = '(\\d+(?:\\.\\d+)?)\\s*%';
 const HIGHER = '(?:\\s*or\\s+(?:higher|above|better|more))?';
 
+/**
+ * "60% or higher in (CSC148H1/ CSC148H5/ CSCA48H3)": the grade applies to every course in the
+ * brackets, so mark each of them and drop the phrase (the brackets stay for grouping).
+ */
+function gradeBeforeBrackets(text: string): string {
+  const re = new RegExp(
+    `\\b(?:a\\s+)?(?:minimum\\s+)?(?:final\\s+)?(?:grade\\s+)?(?:of\\s+)?(?:at\\s+least\\s+)?${PCT}${HIGHER}\\s*in\\s*(?=[([])`,
+    'i',
+  );
+  let out = text;
+  for (let guard = 0; guard < 20; guard++) {
+    const m = re.exec(out);
+    if (!m) break;
+    const open = m.index + m[0].length;
+    let depth = 0;
+    let close = open;
+    for (; close < out.length; close++) {
+      if (out[close] === '(' || out[close] === '[') depth++;
+      else if ((out[close] === ')' || out[close] === ']') && --depth === 0) break;
+    }
+    const inner = out.slice(open, close + 1).replace(new RegExp(CODE, 'g'), (code) => `${code}⟨${m[1]}%⟩`);
+    out = out.slice(0, m.index) + inner + out.slice(close + 1);
+  }
+  return out;
+}
+
 function normalize(text: string): string {
   return (
-    text
-      .replace(/&amp;/g, '&')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/[⟨⟩]/g, ' ')
-      // "[excluding MATA02H3]" is not a requirement
-      .replace(/[[(]\s*(excluding|except|not\s+including)\b[^\])]*[\])]/gi, ' ')
+    gradeBeforeBrackets(
+      text
+        .replace(/&amp;/g, '&')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/[⟨⟩]/g, ' ')
+        // "[excluding MATA02H3]" is not a requirement
+        .replace(/[[(]\s*(excluding|except|not\s+including)\b[^\])]*[\])]/gi, ' '),
+    )
       // grade minimums -> CODE⟨60%⟩
       // "CSC110Y1 (70% or higher)", "MAT133Y1(70%)", "EAS151H1 (minimum of 60%)"
       .replace(

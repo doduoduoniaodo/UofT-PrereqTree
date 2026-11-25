@@ -11,6 +11,7 @@ export function course(code: string, prereq = '', exclusion = '', extra: Partial
     prereq,
     coreq: '',
     exclusion,
+    recommended: '',
     breadth: [],
     ...extra,
   };

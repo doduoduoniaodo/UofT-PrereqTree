@@ -11,6 +11,8 @@ export interface RawCourse {
   prereq: string;
   coreq: string;
   exclusion: string;
+  /** "Recommended Preparation" from the official calendar: suggested, not required */
+  recommended: string;
   breadth: string[];
 }
 
@@ -20,6 +22,9 @@ export interface Course extends RawCourse {
   reqNotes: boolean;
   /** standalone conditions when the prerequisite names no courses, e.g. "1.0 credit in POL courses" */
   conditions: string[];
+  /** recommended preparation, parsed like a prerequisite (but never required) */
+  recReq: Req | null;
+  recConditions: string[];
   coreqReq: Req | null;
   exclusionCodes: string[];
 }
@@ -73,11 +78,14 @@ export function buildCatalog(raw: RawCourse[]): Catalog {
   const unlocks = new Map<string, string[]>();
   for (const r of raw) {
     const { req, hasNotes, conditions } = parsePrereq(r.prereq, resolve);
+    const rec = parsePrereq(r.recommended ?? '', resolve);
     const course: Course = {
       ...r,
       req,
       reqNotes: hasNotes,
       conditions,
+      recReq: rec.req,
+      recConditions: rec.conditions,
       coreqReq: parsePrereq(r.coreq, resolve).req,
       exclusionCodes: [...new Set((r.exclusion.match(CODE_RE) || []).map(resolve))],
     };

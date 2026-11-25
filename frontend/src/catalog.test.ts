@@ -81,3 +81,13 @@ describe('buildCatalog', () => {
     expect(courseStatus(cat, 'CSC999H1', new Set(['MAT137Y1']))).toBe('available');
   });
 });
+
+describe('recommended preparation', () => {
+  it('is parsed like a prerequisite but never required', () => {
+    const cat = catalogOf(course('TGT400H1', '', '', { recommended: 'REC300H1/ REC310H1; some programming experience' }), course('REC300H1'));
+    const c = cat.courses.get('TGT400H1')!;
+    expect(formatReq(c.recReq)).toBe('REC300H1 OR REC310H1');
+    expect(c.recReq?.notes).toEqual([{ text: 'Some programming experience', mode: 'also' }]);
+    expect(courseStatus(cat, 'TGT400H1', new Set())).toBe('available');
+  });
+});

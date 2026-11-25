@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { CAMPUS_LABEL, campusOf, courseStatus, equivalentSource, isSatisfied, satisfiedSet, type Catalog, type Status } from '../catalog';
 import { checksFor, evaluate, formatGrade, type Req, type ReqNote } from '../prereq';
 import { findRoute } from '../path';
+import { reasonsFor, type Suggestion } from '../suggest';
 import { StatusIcon } from './nodes';
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
   /** course whose fastest route is highlighted on the map */
   routeFor: string | null;
   onShowRoute: (code: string | null) => void;
+  suggestions: Suggestion[];
 }
 
 const STATUS_TEXT: Record<Status, string> = {
@@ -29,7 +31,21 @@ const STATUS_TEXT: Record<Status, string> = {
   unknown: 'Not in catalog data',
 };
 
-export function Inspector({ catalog, code, targets, done, onToggle, onSelect, onAdd, onRemove, onShowOnly, routeFor, onShowRoute }: Props) {
+export function Inspector({
+  catalog,
+  code,
+  targets,
+  done,
+  onToggle,
+  onSelect,
+  onAdd,
+  onRemove,
+  onShowOnly,
+  routeFor,
+  onShowRoute,
+  suggestions,
+}: Props) {
+  const suggestion = suggestions.find((s) => s.code === code);
   const onMap = targets.includes(code);
   const course = catalog.courses.get(code);
   const status = courseStatus(catalog, code, done);
@@ -98,6 +114,11 @@ export function Inspector({ catalog, code, targets, done, onToggle, onSelect, on
             Show only this course's tree
           </button>
         )}
+        {suggestion && (
+          <div className="mt-3 rounded-lg border border-violet-900 bg-violet-950/40 p-2.5 text-[11px] text-violet-200">
+            <span className="font-semibold">★ Suggested next</span>: {reasonsFor(suggestion).join(' · ')}
+          </div>
+        )}
         {checks.length > 0 && (
           <div className="mt-3 rounded-lg border border-amber-900/70 bg-amber-950/30 p-2.5">
             <p className="text-[11px] font-medium text-amber-200">
@@ -148,6 +169,19 @@ export function Inspector({ catalog, code, targets, done, onToggle, onSelect, on
             )}
             {course.prereq && <RawText text={course.prereq} />}
           </Section>
+
+          {(course.recReq || course.recConditions.length > 0) && (
+            <Section title="Recommended preparation">
+              <p className="mb-1.5 text-[11px] text-slate-500">Suggested by the calendar, not required.</p>
+              <div className="rounded-lg border border-teal-900/70 bg-slate-950/60 p-2.5">
+                {course.recReq && <ReqTree req={course.recReq} done={done} catalog={catalog} onSelect={onSelect} root />}
+                {course.recConditions.map((c) => (
+                  <NoteRow key={c} text={c} />
+                ))}
+              </div>
+              <RawText text={course.recommended} />
+            </Section>
+          )}
 
           {course.coreq && (
             <Section title="Corequisites">

@@ -11,7 +11,15 @@ npm run build
 
 ## How it works
 
-- `scripts/build-data.mjs` slims `backend/data/courses.json` into `public/courses.json` (fetched at runtime, not bundled).
+- `scripts/build-data.mjs` slims `backend/data/courses.json` into `public/courses.json` (fetched at runtime, not bundled),
+  adding each course's **Recommended Preparation** from `backend/data/recommended.json`. That file comes from
+  `node backend/scripts/fetch-recommended.mjs`, which reads the course listings of the official UofT calendars
+  (A&S, UTM, UTSC, Engineering, Music, KPE, Daniels; ~400 pages, a few minutes). Re-run it to refresh.
+- **Recommended preparation** is parsed like a prerequisite but never required: shown in the side panel, and
+  with **Recommended prep** on, drawn as dotted teal arrows into the selected courses.
+- `src/suggest.ts` suggests **what to take next** (sidebar tab **★ Next**, and **★ Suggested next** on the map):
+  courses you can take now, ranked by next steps toward the courses on your map, then how many locked courses
+  they'd open up and how well they fit your subjects, campus and level.
 - `src/prereq.ts` parses the calendar's prerequisite text into an AND/OR tree
   (`/` = or, `,` `;` = and, `and`/`or` words, `()` / `[]` groups).
   Grade minimums ("60% or higher in CSC148H1", "CSC110Y1 (70% or higher)") are kept on the course

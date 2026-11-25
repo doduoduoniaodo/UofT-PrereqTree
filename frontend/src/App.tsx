@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Link2, Loader2, Network } from 'lucide-react';
 import { loadCatalog, type Campus, type Catalog } from './catalog';
 import type { GraphOptions } from './graph';
 import { readTargetsFromUrl, useProgress, writeUrl } from './useProgress';
+import { suggestNext } from './suggest';
 import { Sidebar } from './components/Sidebar';
 import { GraphView } from './components/GraphView';
 import { Inspector } from './components/Inspector';
@@ -18,7 +19,16 @@ export default function App() {
   const [targets, setTargets] = useState<string[]>(readTargetsFromUrl);
   const [selected, setSelected] = useState(() => targets[targets.length - 1] ?? '');
   const [campus, setCampus] = useState<Campus | 'ALL'>('ALL');
-  const [opts, setOpts] = useState<GraphOptions>({ depth: 2, otherCampuses: false, showUnlocks: true, unlockOverrides: new Map(), expanded: new Set(), collapsed: new Set() });
+  const [opts, setOpts] = useState<GraphOptions>({
+    depth: 2,
+    otherCampuses: false,
+    showUnlocks: true,
+    unlockOverrides: new Map(),
+    expanded: new Set(),
+    collapsed: new Set(),
+    showRecommended: false,
+    showSuggestions: false,
+  });
   const [copied, setCopied] = useState(false);
   // course whose fastest route is highlighted; only meaningful while it's on the map
   const [routeFor, setRouteFor] = useState<string | null>(null);
@@ -79,6 +89,9 @@ export default function App() {
     }
   };
 
+  // what to take next, given what's done and what's on the map (sidebar tab + map stars)
+  const suggestions = useMemo(() => (catalog ? suggestNext(catalog, done, targets, { campus }) : []), [catalog, done, targets, campus]);
+
   if (error) return <FullScreen>Couldn't load course data: {error}</FullScreen>;
   if (!catalog)
     return (
@@ -123,6 +136,7 @@ export default function App() {
             onSelect={setSelected}
             onRemove={removeTarget}
             onClearTargets={clearTargets}
+            suggestions={suggestions}
           />
         </div>
       </aside>
@@ -143,6 +157,7 @@ export default function App() {
               onClearTargets={clearTargets}
               routeFor={activeRoute}
               onShowRoute={showRoute}
+              suggestions={suggestions}
             />
           </ReactFlowProvider>
         ) : (
@@ -164,6 +179,7 @@ export default function App() {
             onShowOnly={showOnly}
             routeFor={activeRoute}
             onShowRoute={showRoute}
+            suggestions={suggestions}
           />
         </aside>
       )}

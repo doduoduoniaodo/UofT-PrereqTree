@@ -57,7 +57,7 @@ describe.skipIf(!existsSync(FILE))('real catalog data', () => {
 
 describe.skipIf(!existsSync(FILE))('route highlighting on real data', () => {
   const cat = buildCatalog(JSON.parse(readFileSync(FILE, 'utf8')) as RawCourse[]);
-  const opts = { depth: 2, otherCampuses: false, showUnlocks: true, unlockOverrides: new Map(), expanded: new Set<string>(), collapsed: new Set<string>() };
+  const opts = { depth: 2, otherCampuses: false, showUnlocks: true, unlockOverrides: new Map(), expanded: new Set<string>(), collapsed: new Set<string>(), showRecommended: false, showSuggestions: false };
 
   // Regression: CSC384H1's route uses MAT148H1 + MAT149H1 for STA237H1 through a nested
   // "all of" inside a "one of"; those arrows used to stay dark, leaving MAT149H1 disconnected.

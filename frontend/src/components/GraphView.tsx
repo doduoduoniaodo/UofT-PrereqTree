@@ -3,7 +3,8 @@ import { Background, Controls, ReactFlow, useNodesInitialized, useReactFlow, typ
 import { Minus, Plus, RotateCcw, Route as RouteIcon, X } from 'lucide-react';
 import clsx from 'clsx';
 import { courseStatus, type Catalog } from '../catalog';
-import { buildGraph, type GraphOptions, type GraphResult } from '../graph';
+import { buildGraph, type GraphExtras, type GraphOptions, type GraphResult } from '../graph';
+import { reasonsFor, type Suggestion } from '../suggest';
 import { offsetFor, placeNodes, reconcileOffsets, type Offset, type Size } from '../placement';
 import { findRoute } from '../path';
 import { nodeTypes } from './nodes';
@@ -24,6 +25,7 @@ interface Props {
   /** selected course whose fastest route is highlighted */
   routeFor: string | null;
   onShowRoute: (code: string | null) => void;
+  suggestions: Suggestion[];
 }
 
 export function GraphView({
@@ -39,9 +41,18 @@ export function GraphView({
   onClearTargets,
   routeFor,
   onShowRoute,
+  suggestions,
 }: Props) {
   const route = useMemo(() => (routeFor ? findRoute(catalog, routeFor, done) : null), [catalog, routeFor, done]);
-  const graph = useMemo(() => buildGraph(catalog, targets, done, opts, route), [catalog, targets, done, opts, route]);
+  // Suggestions on the map: star them, and draw the steps toward the selected courses they lead to.
+  const extras = useMemo<GraphExtras>(() => {
+    if (!opts.showSuggestions) return {};
+    const toward = new Set(suggestions.flatMap((s) => s.toward));
+    const reveal = new Set<string>();
+    for (const t of toward) for (const c of findRoute(catalog, t, done).all) reveal.add(c);
+    return { suggested: new Map(suggestions.map((s) => [s.code, reasonsFor(s).join(' · ')])), reveal };
+  }, [opts.showSuggestions, suggestions, catalog, done]);
+  const graph = useMemo(() => buildGraph(catalog, targets, done, opts, route, extras), [catalog, targets, done, opts, route, extras]);
   // Node positions relative to the node each one hangs off (see placement.ts): set by dragging,
   // and by keeping the existing layout stable whenever the graph changes.
   const [offsets, setOffsets] = useState<Map<string, Offset>>(() => new Map());
@@ -96,7 +107,7 @@ export function GraphView({
 
   // Fit once React Flow has measured the nodes, and again when courses are added/removed or the
   // depth changes. Expanding/collapsing a single course doesn't re-fit, so nothing jumps on screen.
-  const fitKey = `${targets.join(',')}|${opts.depth}|${opts.otherCampuses}|${routeFor}`;
+  const fitKey = `${targets.join(',')}|${opts.depth}|${opts.otherCampuses}|${routeFor}|${opts.showRecommended}|${opts.showSuggestions}`;
   const initialized = useNodesInitialized();
   useEffect(() => {
     if (!initialized) return;
@@ -238,6 +249,12 @@ export function GraphView({
           <Toggle on={opts.otherCampuses} onClick={() => setOpts((o) => ({ ...o, otherCampuses: !o.otherCampuses }))}>
             All alternatives
           </Toggle>
+          <Toggle on={opts.showRecommended} onClick={() => setOpts((o) => ({ ...o, showRecommended: !o.showRecommended }))}>
+            Recommended prep
+          </Toggle>
+          <Toggle on={opts.showSuggestions} onClick={() => setOpts((o) => ({ ...o, showSuggestions: !o.showSuggestions }))}>
+            ★ Suggested next
+          </Toggle>
           {offsets.size > 0 && (
             <button
               onClick={() => {
@@ -268,6 +285,18 @@ export function GraphView({
               <span className="rounded border border-amber-800 bg-stone-900 px-1 font-mono text-[9px] font-semibold text-amber-300">≥60%</span>
               grade needed
             </span>
+            {opts.showRecommended && (
+              <span className="flex items-center gap-1.5">
+                <span className="w-4 border-t-2 border-dotted border-teal-400" />
+                recommended (optional)
+              </span>
+            )}
+            {opts.showSuggestions && (
+              <span className="flex items-center gap-1.5">
+                <span className="rounded-full bg-violet-600 px-1 text-[9px] font-bold text-white">★</span>
+                suggested next
+              </span>
+            )}
             <span className="flex items-center gap-1.5">
               <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-amber-600/70 bg-amber-950 text-[9px] font-bold text-amber-300">
                 ?
@@ -278,6 +307,7 @@ export function GraphView({
           <div className="text-slate-500">
             {courseCount} courses
             {graph.prunedAlternatives > 0 && ` · ${graph.prunedAlternatives} alternatives hidden`}
+            {opts.showRecommended && ` · ${graph.recommendedShown} recommended`}
             {graph.hiddenUnlocks > 0 && ` · +${graph.hiddenUnlocks} more postrequisites in the side panel`}
             {' · '}drag to move (its subtree follows) · double-click a course to add it to the map
           </div>

@@ -15,6 +15,17 @@ export interface GraphOptions {
   expanded: Set<string>;
   /** codes whose prerequisites the user hid */
   collapsed: Set<string>;
+  /** draw the calendar's "Recommended Preparation" for the selected courses */
+  showRecommended: boolean;
+  /** mark suggested next courses (see suggest.ts) */
+  showSuggestions: boolean;
+}
+
+export interface GraphExtras {
+  /** suggested next courses -> why (shown as a star on the node) */
+  suggested?: Map<string, string>;
+  /** courses to always draw, even past the depth limit (e.g. the steps toward suggested courses) */
+  reveal?: Set<string>;
 }
 
 export interface CourseNodeData {
@@ -28,7 +39,9 @@ export interface CourseNodeData {
   prereqsShown: boolean;
   /** requirements that can't be checked automatically (program, credits, permission, ...) */
   conditions: string[];
-  role: 'prereq' | 'focus' | 'unlock';
+  role: 'prereq' | 'focus' | 'unlock' | 'recommended';
+  /** suggested as a next course: why */
+  suggested?: string;
   /** for courses on the map: how many postrequisites exist and whether they're drawn */
   postreqs?: { total: number; shown: boolean };
   /** while a route is highlighted: on the route (true) or not (false) */
@@ -48,6 +61,8 @@ export interface GraphResult {
   edges: Edge[];
   hiddenUnlocks: number;
   prunedAlternatives: number;
+  /** recommended-preparation courses drawn */
+  recommendedShown: number;
   /**
    * The node each node hangs off: a prerequisite's parent is the course (or group) it feeds,
    * a postrequisite's parent is the selected course it comes from. Selected courses have none.
@@ -67,8 +82,12 @@ const COLOR = {
   done: '#34d399',
   idle: '#64748b',
   unlock: '#818cf8',
+  recommended: '#2dd4bf',
   route: '#fbbf24',
 };
+
+/** Recommended-preparation courses drawn per selected course. */
+const MAX_RECOMMENDED = 8;
 
 /** Which campus/division a subtree is being drawn for (the target it hangs off). */
 interface Ctx {
@@ -86,8 +105,11 @@ export function buildGraph(
   done: Set<string>,
   opts: GraphOptions,
   highlight: Pick<Route, 'all' | 'links'> | null = null,
+  extras: GraphExtras = {},
 ): GraphResult {
-  const route = highlight?.all ?? null;
+  // courses that must be drawn even past the depth limit / campus filtering
+  const forceSet = new Set([...(highlight?.all ?? []), ...(extras.reveal ?? [])]);
+  const force = forceSet.size ? forceSet : null;
   const nodes = new Map<string, Node>();
   const edges = new Map<string, Edge>();
   const expandedCourses = new Set<string>();
@@ -120,16 +142,22 @@ export function buildGraph(
     });
   };
 
-  const addEdge = (source: string, target: string, satisfied: boolean, dashed = false, grade?: string) => {
+  /** `unlock`: to a postrequisite (dashed); `recommended`: recommended preparation (dotted). */
+  const addEdge = (
+    source: string,
+    target: string,
+    { satisfied = false, kind = 'req', grade }: { satisfied?: boolean; kind?: 'req' | 'unlock' | 'recommended'; grade?: string } = {},
+  ) => {
     const id = `${source}->${target}`;
     if (edges.has(id)) return;
-    const color = dashed ? COLOR.unlock : satisfied ? COLOR.done : COLOR.idle;
+    const color = kind === 'unlock' ? COLOR.unlock : kind === 'recommended' ? COLOR.recommended : satisfied ? COLOR.done : COLOR.idle;
+    const dash = kind === 'unlock' ? '5 4' : kind === 'recommended' ? '2 4' : undefined;
     edges.set(id, {
       id,
       source,
       target,
       type: 'default',
-      style: { stroke: color, strokeWidth: satisfied ? 2 : 1.5, strokeDasharray: dashed ? '5 4' : undefined },
+      style: { stroke: color, strokeWidth: satisfied ? 2 : 1.5, strokeDasharray: dash },
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
       // grade minimum on this prerequisite, e.g. "≥60%"
       ...(grade && {
@@ -162,7 +190,7 @@ export function buildGraph(
           const d = catalog.courses.get(c)?.division;
           return !d || !homeDivision || d === homeDivision;
         };
-        const onRoute = (i: Req) => route !== null && [...collectCodes(i)].some((c) => route.has(c));
+        const onRoute = (i: Req) => force !== null && [...collectCodes(i)].some((c) => force.has(c));
         for (const keep of [(c: string) => sameCampus(c) && sameDivision(c), sameCampus]) {
           const local = items.filter((i) => onRoute(i) || [...collectCodes(i)].every(keep));
           if (local.length > 0) {
@@ -184,7 +212,7 @@ export function buildGraph(
     if (!course?.req) return;
     if (!targetSet.has(code) && has.has(code)) return; // no need to show how you got there
     const data = nodes.get(code)!.data as CourseNodeData;
-    const forced = route !== null && route.has(code) && [...collectCodes(course.req)].some((c) => route.has(c));
+    const forced = force !== null && force.has(code) && [...collectCodes(course.req)].some((c) => force.has(c));
     if (opts.collapsed.has(code) || (depth >= opts.depth && !opts.expanded.has(code) && !forced)) {
       data.truncated = true;
       return;
@@ -198,7 +226,7 @@ export function buildGraph(
     if (req.kind === 'course') {
       addCourse(req.code, 'prereq');
       setParent(req.code, target);
-      addEdge(req.code, target, has.has(req.code), false, req.grade);
+      addEdge(req.code, target, { satisfied: has.has(req.code), grade: req.grade });
       expand(req.code, depth + 1, ctx);
       return;
     }
@@ -217,7 +245,7 @@ export function buildGraph(
       position: { x: 0, y: 0 },
       data: { op: req.kind, satisfied } satisfies GroupNodeData,
     });
-    addEdge(id, target, satisfied);
+    addEdge(id, target, { satisfied });
     setParent(id, target);
     for (const item of req.items) attach(item, id, false, depth, ctx);
   };
@@ -225,6 +253,23 @@ export function buildGraph(
   const ctxFor = (code: string): Ctx => ({ home: campusOf(code), homeDivision: catalog.courses.get(code)?.division });
   for (const t of targets) addCourse(t, 'focus');
   for (const t of targets) expand(t, 0, ctxFor(t));
+
+  // Recommended preparation: optional courses the calendar suggests, as dotted arrows into the course.
+  let recommendedShown = 0;
+  if (opts.showRecommended) {
+    for (const t of targets) {
+      const codes = [...collectCodes(catalog.courses.get(t)?.recReq ?? null)].filter((c) => c !== t);
+      const local = codes.filter((c) => opts.otherCampuses || campusOf(c) === campusOf(t));
+      for (const code of (local.length ? local : codes).slice(0, MAX_RECOMMENDED)) {
+        if (!nodes.has(code)) {
+          addCourse(code, 'recommended');
+          recommendedShown++;
+        }
+        setParent(code, t);
+        addEdge(code, t, { kind: 'recommended' });
+      }
+    }
+  }
 
   // Postrequisites: which courses on the map should show what they unlock?
   const unlocksOf = (t: string) => {
@@ -256,13 +301,24 @@ export function buildGraph(
     }
     // connect every target to every drawn unlock it leads to
     for (const t of showing) {
-      for (const c of catalog.unlocks.get(t) || []) if (unlockNodes.has(c)) addEdge(t, c, false, true);
+      for (const c of catalog.unlocks.get(t) || []) if (unlockNodes.has(c)) addEdge(t, c, { kind: 'unlock' });
     }
+  }
+
+  for (const [code, why] of extras.suggested ?? []) {
+    const node = nodes.get(code);
+    if (node?.type === 'course') (node.data as CourseNodeData).suggested = why;
   }
 
   if (highlight) highlightRoute(nodes, edges, highlight);
 
-  return { ...layout([...nodes.values()], [...edges.values()]), hiddenUnlocks, prunedAlternatives, parents };
+  return {
+    ...layout([...nodes.values()], [...edges.values()]),
+    hiddenUnlocks,
+    prunedAlternatives,
+    recommendedShown,
+    parents,
+  };
 }
 
 /**

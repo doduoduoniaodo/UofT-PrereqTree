@@ -22,6 +22,7 @@ export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) 
         selected && !focus && 'ring-2 ring-slate-300/70',
         data.route === true && !focus && !selected && 'ring-2 ring-amber-400/90 ring-offset-2 ring-offset-slate-950',
         data.route === false ? 'opacity-25' : data.role === 'unlock' && status === 'locked' && 'opacity-80',
+        data.role === 'recommended' && status === 'locked' && 'border-dashed border-teal-700/80',
       )}
     >
       <Handle type="target" position={Position.Left} className={handle} />
@@ -30,6 +31,22 @@ export function CourseNode({ data, selected }: NodeProps<Node<CourseNodeData>>) 
         <span className="font-mono text-[13px] font-semibold tracking-tight text-slate-100">{data.code}</span>
       </div>
       <div className="mt-0.5 text-[11px] leading-tight text-slate-400 line-clamp-2">{data.title}</div>
+      {data.suggested && (
+        <span
+          title={`Suggested next: ${data.suggested}`}
+          className="absolute -top-2 left-2 rounded-full bg-violet-600 px-1.5 text-[9px] font-bold leading-4 text-white shadow"
+        >
+          ★ next
+        </span>
+      )}
+      {data.role === 'recommended' && (
+        <span
+          title="Recommended preparation: suggested by the calendar, not required"
+          className="absolute -top-2 right-7 rounded-full border border-teal-700 bg-teal-950 px-1.5 text-[9px] font-semibold leading-4 text-teal-300"
+        >
+          recommended
+        </span>
+      )}
       {data.conditions.length > 0 && (
         <span
           title={`Also has requirements that can't be checked automatically:\n• ${data.conditions.join('\n• ')}`}

@@ -10,6 +10,8 @@ const opts: GraphOptions = {
   unlockOverrides: new Map(),
   expanded: new Set(),
   collapsed: new Set(),
+  showRecommended: false,
+  showSuggestions: false,
 };
 
 describe('route highlighting', () => {
@@ -96,5 +98,44 @@ describe('grade labels while a route is highlighted', () => {
     const fromX = graph.edges.find((e) => e.source === 'XXX100H1')!;
     expect(fromX.style?.opacity).toBe(0.15);
     expect(fromX.label).toBeUndefined();
+  });
+});
+
+describe('recommended preparation and suggestions on the map', () => {
+  const cat = catalogOf(
+    course('TGT400H1', 'PRE300H1', '', { recommended: 'REC300H1/ REC310H1, any course in statistics' }),
+    course('PRE300H1'),
+    course('REC300H1'),
+    course('REC310H1'),
+  );
+
+  it('draws nothing extra unless asked', () => {
+    const graph = buildGraph(cat, ['TGT400H1'], new Set(), opts);
+    expect(graph.nodes.some((n) => n.id === 'REC300H1')).toBe(false);
+    expect(graph.recommendedShown).toBe(0);
+  });
+
+  it('draws recommended courses with dotted arrows into the selected course', () => {
+    const graph = buildGraph(cat, ['TGT400H1'], new Set(), { ...opts, showRecommended: true });
+    const rec = graph.edges.filter((e) => e.target === 'TGT400H1' && e.style?.strokeDasharray === '2 4').map((e) => e.source);
+    expect(rec.sort()).toEqual(['REC300H1', 'REC310H1']);
+    expect((graph.nodes.find((n) => n.id === 'REC300H1')!.data as { role: string }).role).toBe('recommended');
+    expect(graph.parents.get('REC300H1')).toBe('TGT400H1');
+    expect(graph.recommendedShown).toBe(2);
+    // the real prerequisite is still a solid arrow
+    expect(graph.edges.find((e) => e.source === 'PRE300H1')?.style?.strokeDasharray).toBeUndefined();
+  });
+
+  it('stars suggested courses that are drawn', () => {
+    const graph = buildGraph(cat, ['TGT400H1'], new Set(), opts, null, { suggested: new Map([['PRE300H1', 'Next step toward TGT400H1']]) });
+    expect((graph.nodes.find((n) => n.id === 'PRE300H1')!.data as { suggested?: string }).suggested).toBe('Next step toward TGT400H1');
+  });
+
+  it('draws courses it is asked to reveal, even past the depth limit', () => {
+    const deep = catalogOf(course('TGT400H1', 'MID300H1'), course('MID300H1', 'LOW100H1'), course('LOW100H1'));
+    const shallow = { ...opts, depth: 1 };
+    expect(buildGraph(deep, ['TGT400H1'], new Set(), shallow).nodes.some((n) => n.id === 'LOW100H1')).toBe(false);
+    const revealed = buildGraph(deep, ['TGT400H1'], new Set(), shallow, null, { reveal: new Set(['TGT400H1', 'MID300H1', 'LOW100H1']) });
+    expect(revealed.nodes.some((n) => n.id === 'LOW100H1')).toBe(true);
   });
 });

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import Fuse from 'fuse.js';
-import { Check, ChevronDown, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, HelpCircle, Search, Trash2, X } from 'lucide-react';
+import { reasonsFor, type Suggestion } from '../suggest';
 import clsx from 'clsx';
 import { campusOf, courseLevel, courseStatus, satisfiedSet, type Campus, type Catalog, type Course } from '../catalog';
 import { collectCodes } from '../prereq';
@@ -20,6 +21,8 @@ interface Props {
   onSelect: (code: string) => void;
   onRemove: (code: string) => void;
   onClearTargets: () => void;
+  /** what to take next (see suggest.ts) */
+  suggestions: Suggestion[];
 }
 
 const CAMPUSES: { id: Campus | 'ALL'; label: string }[] = [
@@ -33,8 +36,22 @@ const CODE_LIKE = /^[a-z]{2,4}[a-z0-9]?\d{0,2}[hy]?\d?$/i;
 /** a complete course code, e.g. MAT137Y1 */
 const FULL_CODE = /^[A-Z]{3}[A-Z0-9]\d{2}[HY]\d$/;
 
-export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, onAdd, onClear, selected, onSelect, onRemove, onClearTargets }: Props) {
-  const [tab, setTab] = useState<'search' | 'mine'>('search');
+export function Sidebar({
+  catalog,
+  done,
+  targets,
+  campus,
+  setCampus,
+  onToggle,
+  onAdd,
+  onClear,
+  selected,
+  onSelect,
+  onRemove,
+  onClearTargets,
+  suggestions,
+}: Props) {
+  const [tab, setTab] = useState<'search' | 'mine' | 'next'>('search');
   const [query, setQuery] = useState('');
 
   const fuse = useMemo(
@@ -127,6 +144,9 @@ export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, o
           <TabButton active={tab === 'mine'} onClick={() => setTab('mine')}>
             My courses <span className="ml-1 rounded-full bg-slate-800 px-1.5 text-[10px] text-slate-300">{done.size}</span>
           </TabButton>
+          <TabButton active={tab === 'next'} onClick={() => setTab('next')}>
+            ★ Next <span className="ml-1 rounded-full bg-violet-900/80 px-1.5 text-[10px] text-violet-200">{suggestions.length}</span>
+          </TabButton>
         </div>
       </div>
 
@@ -161,6 +181,33 @@ export function Sidebar({ catalog, done, targets, campus, setCampus, onToggle, o
               courses you've already taken.
             </Empty>
           )
+        ) : tab === 'next' ? (
+          <div className="pb-4">
+            <p className="px-4 pt-3 text-[11px] leading-relaxed text-slate-500">
+              Courses you can take now, best first: next steps toward the courses on your map, then the ones that open up the most
+              {campus !== 'ALL' ? ' (this campus only)' : ''}. Click one to add it to the map.
+            </p>
+            {suggestions.length ? (
+              suggestions.map((s, i) => (
+                <SuggestionRow
+                  key={s.code}
+                  rank={i + 1}
+                  catalog={catalog}
+                  suggestion={s}
+                  done={done}
+                  active={targets.includes(s.code)}
+                  onToggle={onToggle}
+                  onFocus={onAdd}
+                />
+              ))
+            ) : (
+              <Empty>
+                {done.size || targets.length
+                  ? 'Nothing to suggest yet: none of the courses you can take now build on what you have done or lead to the courses on your map.'
+                  : 'Tick the courses you have completed, or add courses you want to take to the map, to get suggestions.'}
+              </Empty>
+            )}
+          </div>
         ) : (
           <div className="pb-4">
             <ListHeader>Ready to take ({ready.length})</ListHeader>
@@ -263,6 +310,67 @@ function SelectedList({
             ))}
           </div>
         ))}
+    </div>
+  );
+}
+
+function SuggestionRow({
+  rank,
+  catalog,
+  suggestion,
+  done,
+  active,
+  onToggle,
+  onFocus,
+}: {
+  rank: number;
+  catalog: Catalog;
+  suggestion: Suggestion;
+  done: Set<string>;
+  active: boolean;
+  onToggle: (c: string) => void;
+  onFocus: (c: string) => void;
+}) {
+  const course = catalog.courses.get(suggestion.code)!;
+  const reasons = reasonsFor(suggestion);
+  return (
+    <div
+      onClick={() => onFocus(course.code)}
+      className={clsx(
+        'flex cursor-pointer gap-2.5 border-l-2 px-4 py-2.5 transition hover:bg-slate-800/50',
+        active ? 'border-indigo-500 bg-indigo-950/30' : 'border-transparent',
+      )}
+    >
+      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-violet-900 text-[9px] font-bold text-violet-200">
+        {rank}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[13px] font-semibold text-slate-100">{course.code}</span>
+          <span className="text-[10px] text-slate-500">{course.campus === 'Other' ? '' : course.campus}</span>
+        </div>
+        <div className="truncate text-xs text-slate-400">{course.title}</div>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {reasons.map((r) => (
+            <span
+              key={r}
+              className={clsx(
+                'rounded px-1.5 py-px text-[10px]',
+                r.startsWith('Next step') || r.startsWith('On your map') ? 'bg-violet-950 text-violet-200' : 'bg-slate-800 text-slate-300',
+              )}
+            >
+              {r}
+            </span>
+          ))}
+        </div>
+        {suggestion.checks.length > 0 && (
+          <div className="mt-1 flex gap-1 text-[10px] leading-snug text-amber-300/80" title="Can't be checked automatically">
+            <HelpCircle className="mt-px h-3 w-3 shrink-0" />
+            <span className="line-clamp-2">Check: {suggestion.checks.join(' · ')}</span>
+          </div>
+        )}
+      </div>
+      <DoneButton isDone={done.has(course.code)} onClick={() => onToggle(course.code)} />
     </div>
   );
 }
